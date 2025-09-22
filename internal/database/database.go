@@ -28,9 +28,9 @@ func NewPool(conf Config) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse config failed: %w", err)
 	}
 
-	poolConfig.MaxConns = 20
+	poolConfig.MaxConns = 3000000
 	poolConfig.MinConns = 2
-	poolConfig.MaxConnLifetime = time.Hour
+	poolConfig.MaxConnLifetime = (5 * time.Second)
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {

@@ -136,7 +136,7 @@ class WaterMonitoringApp {
             <div class="analysis-header">
                 <h3>Анализ за период: ${analysis.period}</h3>
                 <div class="status ${analysis.hasAnomalies ? 'has-anomalies' : 'normal'}">
-                    ${analysis.hasAnomalies ? '⚠️ Обнаружены аномалии' : '✅ Норма'}
+                    ${analysis.hasAnomalies ? 'Обнаружены аномалии' : 'Норма'}
                 </div>
             </div>
             

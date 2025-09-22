@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Мониторинг потребления воды</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="/css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -27,7 +27,9 @@
                 <div class="search-box">
                     <input type="text" id="searchInput" placeholder="Поиск по адресу...">
                 </div>
-                <div id="buildingsList" class="buildings-grid"></div>
+                <div id="buildingsList" class="buildings-grid">
+                    <div class="loading">Загрузка данных...</div>
+                </div>
             </div>
         </section>
 
@@ -46,7 +48,9 @@
                     </select>
                     <button id="analyzeBtn" class="btn-primary">Анализировать</button>
                 </div>
-                <div id="analysisResults" class="analysis-results"></div>
+                <div id="analysisResults" class="analysis-results">
+                    <div class="loading">Выберите здание для анализа</div>
+                </div>
             </div>
         </section>
 
@@ -58,12 +62,12 @@
                     <div class="metric-card">
                         <h3>ХВС - Подача</h3>
                         <div class="value" id="coldWaterIn">0 м³/ч</div>
-                        <div class="trend up">+5%</div>
+                        <div class="trend up">+0%</div>
                     </div>
                     <div class="metric-card">
                         <h3>ХВС - Возврат</h3>
                         <div class="value" id="coldWaterOut">0 м³/ч</div>
-                        <div class="trend down">-2%</div>
+                        <div class="trend down">-0%</div>
                     </div>
                     <div class="metric-card">
                         <h3>ГВС - Канал 1</h3>
@@ -73,7 +77,7 @@
                     <div class="metric-card">
                         <h3>ГВС - Канал 2</h3>
                         <div class="value" id="hotWaterCh2">0 м³/ч</div>
-                        <div class="trend up">+3%</div>
+                        <div class="trend up">+0%</div>
                     </div>
                 </div>
                 <div class="charts-container">
@@ -92,8 +96,8 @@
         </div>
     </div>
 
-    <script src="js/api.js"></script>
-    <script src="js/charts.js"></script>
-    <script src="js/app.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/charts.js"></script>
+    <script src="/js/app.js"></script>
 </body>
 </html>
