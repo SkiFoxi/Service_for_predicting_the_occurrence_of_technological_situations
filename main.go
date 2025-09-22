@@ -15,7 +15,6 @@ import (
     "github.com/gin-contrib/cors"
 )
 
-
 func main() {
     // Конфигурация базы данных
     dbConfig := database.Config{
@@ -73,19 +72,25 @@ func main() {
 
     // Инициализация обработчиков
     handler := api.NewHandler(pool)
-    handler.Generator = dataGenerator
+    // Убираем строку с Generator, так как его нет в Handler
 
     // Главная страница
     router.GET("/", func(c *gin.Context) {
         c.HTML(http.StatusOK, "index.html", nil)
     })
 
-    // API маршруты - ПРОСТАЯ ВЕРСИЯ для теста
+    // API маршруты
     apiGroup := router.Group("/api")
     {
-
-        apiGroup.GET("/analysis/:id", handler.AnalyzeBuilding)
         apiGroup.GET("/buildings", handler.GetBuildings)
+        // Убираем пока этот маршрут, так как метода нет
+        // apiGroup.GET("/buildings/:id", handler.GetBuildingByID)
+        apiGroup.GET("/analysis/:id", handler.AnalyzeBuilding)
+        apiGroup.POST("/seed-data", handler.SeedTestData)
+        apiGroup.GET("/realtime/:id", handler.GetRealtimeData)
+        apiGroup.POST("/generator/start", handler.StartGenerator)
+        apiGroup.POST("/generator/stop", handler.StopGenerator)
+        apiGroup.GET("/generator/status", handler.GetGeneratorStatus)
         
         // Простой тестовый эндпоинт
         apiGroup.GET("/test", func(c *gin.Context) {
@@ -96,7 +101,7 @@ func main() {
             })
         })
         
-        // Health check расширенный
+        // Health check
         apiGroup.GET("/health", func(c *gin.Context) {
             // Проверяем соединение с БД
             var dbStatus string
@@ -126,6 +131,7 @@ func main() {
     log.Println("  http://localhost:8080/api/buildings - Buildings API")
     log.Println("  http://localhost:8080/api/test - Test API")
     log.Println("  http://localhost:8080/api/health - Health check")
+    log.Println("  http://localhost:8080/api/realtime/:id - Real-time data")
     
     if err := router.Run(":8080"); err != nil {
         log.Fatalf("Failed to start server: %v", err)
