@@ -267,36 +267,126 @@ class WaterMonitoringApp {
         const container = document.getElementById('analysisResults');
         if (!container) return;
         
+        // Статусы с иконками
+        const statusIcons = {
+            normal: '✅',
+            leak: '🚨', 
+            error: '⚠️',
+            warning: '🔶',
+            critical: '🔥'
+        };
+        
+        const pumpIcons = {
+            normal: '✅',
+            maintenance_soon: '⚙️',
+            maintenance_required: '🛠️'
+        };
+
         container.innerHTML = `
             <div class="analysis-header">
                 <h3>Анализ за период: ${analysis.period || '30 дней'}</h3>
-                <div class="status ${analysis.has_anomalies || analysis.hasAnomalies ? 'has-anomalies' : 'normal'}">
-                    ${analysis.has_anomalies || analysis.hasAnomalies ? '⚠️ Обнаружены аномалии' : '✅ Норма'}
+                <div class="status ${analysis.has_anomalies ? 'has-anomalies' : 'normal'}">
+                    ${analysis.has_anomalies ? '⚠️ Обнаружены аномалии' : '✅ Норма'}
                 </div>
             </div>
             
             <div class="metrics-grid">
                 <div class="metric">
                     <span>ХВС всего:</span>
-                    <strong>${analysis.total_cold_water || analysis.TotalColdWater || 0} м³</strong>
+                    <strong>${analysis.total_cold_water || 0} м³</strong>
                 </div>
                 <div class="metric">
                     <span>ГВС всего:</span>
-                    <strong>${analysis.total_hot_water || analysis.TotalHotWater || 0} м³</strong>
+                    <strong>${analysis.total_hot_water || 0} м³</strong>
                 </div>
                 <div class="metric">
                     <span>Разница:</span>
-                    <strong class="${(analysis.difference || analysis.Difference || 0) > 0 ? 'positive' : 'negative'}">
-                        ${analysis.difference || analysis.Difference || 0} м³ 
-                        (${analysis.difference_percent || analysis.DifferencePercent || 0}%)
+                    <strong class="${analysis.difference > 0 ? 'positive' : 'negative'}">
+                        ${analysis.difference || 0} м³ (${analysis.difference_percent || 0}%)
                     </strong>
                 </div>
                 <div class="metric">
                     <span>Аномалий:</span>
-                    <strong>${analysis.anomaly_count || analysis.AnomalyCount || 0}</strong>
+                    <strong>${analysis.anomaly_count || 0}</strong>
+                </div>
+            </div>
+
+            <!-- ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ -->
+            <div class="intelligent-analysis">
+                <h4>🧠 Интеллектуальный анализ</h4>
+                
+                <div class="analysis-item">
+                    <strong>Баланс воды:</strong>
+                    <span class="status-${analysis.water_balance_status}">
+                        ${statusIcons[analysis.water_balance_status] || '❓'} 
+                        ${this.getWaterBalanceText(analysis.water_balance_status)}
+                    </span>
+                </div>
+                
+                <div class="analysis-item">
+                    <strong>Температурный режим:</strong>
+                    <span class="status-${analysis.temperature_status}">
+                        ${statusIcons[analysis.temperature_status] || '❓'}
+                        ${this.getTemperatureText(analysis.temperature_status)}
+                    </span>
+                </div>
+                
+                <div class="analysis-item">
+                    <strong>Состояние насосов:</strong>
+                    <span class="status-${analysis.pump_status}">
+                        ${pumpIcons[analysis.pump_status] || '❓'}
+                        ${analysis.pump_operating_hours || 0} часов наработки - 
+                        ${this.getPumpStatusText(analysis.pump_status)}
+                    </span>
+                </div>
+            </div>
+
+            <!-- РЕКОМЕНДАЦИИ -->
+            <div class="recommendations">
+                <h4>💡 Рекомендации системы</h4>
+                <div class="recommendations-list">
+                    ${this.renderRecommendations(analysis.recommendations || [])}
                 </div>
             </div>
         `;
+    }
+
+// Вспомогательные методы для текста статусов
+    getWaterBalanceText(status) {
+        const texts = {
+            normal: 'Норма (подача ≈ возврат + потребление)',
+            leak: 'Возможная утечка (нарушен баланс)',
+            error: 'Ошибка баланса (большое отклонение)'
+        };
+        return texts[status] || 'Неизвестный статус';
+    }
+
+    getTemperatureText(status) {
+        const texts = {
+            normal: 'Норма (ΔT = 17-23°C)',
+            warning: 'Предупреждение (ΔT вне нормы)',
+            critical: 'Критично (ΔT критическое)'
+        };
+        return texts[status] || 'Неизвестный статус';
+    }
+
+    getPumpStatusText(status) {
+        const texts = {
+            normal: 'Норма',
+            maintenance_soon: 'Требуется ТО в ближайшее время',
+            maintenance_required: 'СРОЧНОЕ ТЕХОБСЛУЖИВАНИЕ!'
+        };
+        return texts[status] || 'Неизвестный статус';
+    }
+
+    renderRecommendations(recommendations) {
+        if (!recommendations || recommendations.length === 0) {
+            return '<div class="recommendation">✅ Все системы работают нормально</div>';
+        }
+        
+        return recommendations.map(rec => 
+            `<div class="recommendation">${rec}</div>`
+        ).join('');
     }
 
     showSection(sectionId) {

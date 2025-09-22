@@ -297,6 +297,59 @@ body {
     color: #00b894;
 }
 
+/* Интеллектуальный анализ */
+.intelligent-analysis {
+    background: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 10px;
+    margin: 1.5rem 0;
+    border-left: 4px solid #3498db;
+}
+
+.analysis-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.analysis-item:last-child {
+    border-bottom: none;
+}
+
+/* Статусы */
+.status-normal { color: #27ae60; font-weight: bold; }
+.status-leak { color: #e74c3c; font-weight: bold; }
+.status-error { color: #f39c12; font-weight: bold; }
+.status-warning { color: #f39c12; font-weight: bold; }
+.status-critical { color: #e74c3c; font-weight: bold; }
+.status-maintenance_soon { color: #f39c12; font-weight: bold; }
+.status-maintenance_required { color: #e74c3c; font-weight: bold; }
+
+/* Рекомендации */
+.recommendations {
+    background: #fff3cd;
+    padding: 1.5rem;
+    border-radius: 10px;
+    border-left: 4px solid #ffc107;
+}
+
+.recommendation {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #ffeaa7;
+}
+
+.recommendation:last-child {
+    border-bottom: none;
+}
+
+.recommendation:hover {
+    background: #ffeaa7;
+    border-radius: 5px;
+    padding-left: 0.5rem;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .header .container {

@@ -33,20 +33,11 @@ func main() {
     }
     defer pool.Close()
 
-    // Создаем генератор данных
-    dataGenerator := service.NewDataGenerator(pool)
-    
-    // Загружаем существующие данные
-    ctx := context.Background()
-    if err := dataGenerator.LoadExistingData(ctx); err != nil {
-        log.Printf("Warning: could not load existing data: %v", err)
-    }
-
-    // Запускаем генерацию данных (если включено)
     if os.Getenv("ENABLE_DATA_GENERATION") == "true" {
-        dataGenerator.Start(ctx)
-        defer dataGenerator.Stop()
-        log.Println("Real-time data generation enabled")
+        generator := service.NewDataGenerator(pool)
+        ctx := context.Background()
+        generator.Start(ctx)
+        log.Println("Data generation enabled")
     }
 
     // Создание HTTP сервера
@@ -72,7 +63,6 @@ func main() {
 
     // Инициализация обработчиков
     handler := api.NewHandler(pool)
-    // Убираем строку с Generator, так как его нет в Handler
 
     // Главная страница
     router.GET("/", func(c *gin.Context) {
@@ -83,8 +73,7 @@ func main() {
     apiGroup := router.Group("/api")
     {
         apiGroup.GET("/buildings", handler.GetBuildings)
-        // Убираем пока этот маршрут, так как метода нет
-        // apiGroup.GET("/buildings/:id", handler.GetBuildingByID)
+        apiGroup.GET("/buildings/:id", handler.GetBuildingByID)
         apiGroup.GET("/analysis/:id", handler.AnalyzeBuilding)
         apiGroup.POST("/seed-data", handler.SeedTestData)
         apiGroup.GET("/realtime/:id", handler.GetRealtimeData)
@@ -107,7 +96,7 @@ func main() {
             var dbStatus string
             var buildingCount int
             
-            err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM buildings").Scan(&buildingCount)
+            err := pool.QueryRow(context.Background(), "SELECT COUNT(*) FROM buildings").Scan(&buildingCount)
             if err != nil {
                 dbStatus = "error: " + err.Error()
                 buildingCount = 0
@@ -132,6 +121,7 @@ func main() {
     log.Println("  http://localhost:8080/api/test - Test API")
     log.Println("  http://localhost:8080/api/health - Health check")
     log.Println("  http://localhost:8080/api/realtime/:id - Real-time data")
+    log.Println("  http://localhost:8080/api/analysis/:id - Intelligent analysis")
     
     if err := router.Run(":8080"); err != nil {
         log.Fatalf("Failed to start server: %v", err)

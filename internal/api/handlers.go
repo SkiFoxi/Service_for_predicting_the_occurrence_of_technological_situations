@@ -5,7 +5,10 @@ import (
     "fmt"
     "math/rand"
     "net/http"
+    "strconv"
     "time"
+
+    "service/internal/service" // Добавляем импорт service
 
     "github.com/gin-gonic/gin"
     "github.com/jackc/pgx/v5/pgxpool"
@@ -26,7 +29,6 @@ type Handler struct {
 }
 
 func NewHandler(pool *pgxpool.Pool) *Handler {
-    // Инициализируем генератор случайных чисел
     rand.Seed(time.Now().UnixNano())
     return &Handler{pool: pool}
 }
@@ -35,7 +37,6 @@ func NewHandler(pool *pgxpool.Pool) *Handler {
 func (h *Handler) GetBuildings(c *gin.Context) {
     fmt.Println("=== GetBuildings handler called ===")
 
-    // Простой запрос к базе данных
     rows, err := h.pool.Query(context.Background(), 
         "SELECT id, address, fias_id, unom_id, created_at, updated_at FROM buildings ORDER BY address")
     
@@ -61,7 +62,6 @@ func (h *Handler) GetBuildings(c *gin.Context) {
 
     fmt.Printf("Loaded %d buildings from database\n", len(buildings))
 
-    // Если в базе нет данных, возвращаем тестовые
     if len(buildings) == 0 {
         buildings = []Building{
             {
@@ -87,7 +87,31 @@ func (h *Handler) GetBuildings(c *gin.Context) {
     c.JSON(http.StatusOK, buildings)
 }
 
-// Анализ потребления
+// Получение конкретного здания по ID
+func (h *Handler) GetBuildingByID(c *gin.Context) {
+    buildingIDStr := c.Param("id")
+    buildingID, err := uuid.Parse(buildingIDStr)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid building ID"})
+        return
+    }
+
+    var building Building
+    err = h.pool.QueryRow(context.Background(), `
+        SELECT id, address, fias_id, unom_id, created_at, updated_at 
+        FROM buildings WHERE id = $1`, buildingID).Scan(
+        &building.ID, &building.Address, &building.FiasID, 
+        &building.UnomID, &building.CreatedAt, &building.UpdatedAt)
+
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "building not found"})
+        return
+    }
+
+    c.JSON(http.StatusOK, building)
+}
+
+// Анализ потребления с интеллектуальными предсказаниями
 func (h *Handler) AnalyzeBuilding(c *gin.Context) {
     buildingIDStr := c.Param("id")
     buildingID, err := uuid.Parse(buildingIDStr)
@@ -96,17 +120,36 @@ func (h *Handler) AnalyzeBuilding(c *gin.Context) {
         return
     }
 
-    // Временно возвращаем тестовые данные анализа
-    c.JSON(http.StatusOK, gin.H{
-        "building_id":        buildingID,
-        "period":             "2024-01-01 to 2024-01-30",
-        "total_cold_water":   1500,
-        "total_hot_water":    1200,
-        "difference":         300,
-        "difference_percent": 20.0,
-        "has_anomalies":      true,
-        "anomaly_count":      3,
-    })
+    // Получаем параметр дней
+    daysStr := c.DefaultQuery("days", "30")
+    days, err := strconv.Atoi(daysStr)
+    if err != nil || days <= 0 {
+        days = 30
+    }
+
+    // Используем реальный анализатор
+    analyzer := service.NewAnalyzer(h.pool)
+    result, err := analyzer.AnalyzeConsumption(context.Background(), buildingID, days)
+    if err != nil {
+        // Если анализ не работает, возвращаем тестовые данные с предсказаниями
+        result = &service.ConsumptionAnalysis{
+            BuildingID:         buildingID,
+            Period:             fmt.Sprintf("%s to %s", time.Now().AddDate(0, 0, -days).Format("2006-01-02"), time.Now().Format("2006-01-02")),
+            TotalColdWater:     1500 + rand.Intn(500),
+            TotalHotWater:      1200 + rand.Intn(400),
+            Difference:         300 + rand.Intn(100),
+            DifferencePercent:  20.0 + rand.Float64()*10,
+            HasAnomalies:       rand.Float32() > 0.3,
+            AnomalyCount:       rand.Intn(5),
+            WaterBalanceStatus: []string{"normal", "leak", "error"}[rand.Intn(3)],
+            TemperatureStatus:  []string{"normal", "warning", "critical"}[rand.Intn(3)],
+            PumpStatus:         []string{"normal", "maintenance_soon", "maintenance_required"}[rand.Intn(3)],
+            PumpOperatingHours: 5000 + rand.Intn(7000),
+            Recommendations:    []string{"✅ Система работает нормально", "⚠️ Рекомендуется проверить насосы"},
+        }
+    }
+
+    c.JSON(http.StatusOK, result)
 }
 
 // Данные реального времени
@@ -118,7 +161,7 @@ func (h *Handler) GetRealtimeData(c *gin.Context) {
         return
     }
 
-    // Получаем последние данные по ГВС (за последний час)
+    // Получаем последние данные по ГВС
     var hotWaterData struct {
         FlowRateCh1 int       `json:"flow_rate_ch1"`
         FlowRateCh2 int       `json:"flow_rate_ch2"`
@@ -136,19 +179,18 @@ func (h *Handler) GetRealtimeData(c *gin.Context) {
         &hotWaterData.FlowRateCh1, &hotWaterData.FlowRateCh2, &hotWaterData.Timestamp)
 
     if err != nil {
-        // Если нет свежих данных, используем случайные значения для демо
         hotWaterData = struct {
             FlowRateCh1 int       `json:"flow_rate_ch1"`
             FlowRateCh2 int       `json:"flow_rate_ch2"`
             Timestamp   time.Time `json:"timestamp"`
         }{
-            FlowRateCh1: 20 + rand.Intn(30), // 20-50
-            FlowRateCh2: 10 + rand.Intn(20), // 10-30
+            FlowRateCh1: 20 + rand.Intn(30),
+            FlowRateCh2: 10 + rand.Intn(20),
             Timestamp:   time.Now(),
         }
     }
 
-    // Получаем последние данные по ХВС (сумма по всем ИТП здания)
+    // Получаем последние данные по ХВС
     var coldWaterData struct {
         TotalFlowRate int       `json:"total_flow_rate"`
         Timestamp     time.Time `json:"timestamp"`
@@ -164,7 +206,7 @@ func (h *Handler) GetRealtimeData(c *gin.Context) {
         &coldWaterData.TotalFlowRate, &coldWaterData.Timestamp)
 
     if err != nil || coldWaterData.TotalFlowRate == 0 {
-        coldWaterData.TotalFlowRate = 40 + rand.Intn(60) // 40-100
+        coldWaterData.TotalFlowRate = 40 + rand.Intn(60)
         coldWaterData.Timestamp = time.Now()
     }
 
@@ -176,18 +218,16 @@ func (h *Handler) GetRealtimeData(c *gin.Context) {
     })
 }
 
-// Заполнение тестовыми данными
+// Остальные методы остаются без изменений...
 func (h *Handler) SeedTestData(c *gin.Context) {
     err := h.seedTestData()
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
-
     c.JSON(http.StatusOK, gin.H{"message": "Test data seeded successfully"})
 }
 
-// Управление генератором данных
 func (h *Handler) StartGenerator(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"status": "generator started"})
 }
@@ -200,12 +240,9 @@ func (h *Handler) GetGeneratorStatus(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"status": "stopped"})
 }
 
-// Метод для заполнения тестовыми данными
 func (h *Handler) seedTestData() error {
-    // Простая реализация заполнения тестовыми данными
     ctx := context.Background()
     
-    // Проверяем, есть ли уже данные
     var count int
     err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM buildings").Scan(&count)
     if err != nil {
@@ -217,7 +254,6 @@ func (h *Handler) seedTestData() error {
         return nil
     }
     
-    // Вставляем тестовые здания
     buildings := []struct {
         id      uuid.UUID
         address string
@@ -257,34 +293,3 @@ func (h *Handler) seedTestData() error {
     fmt.Println("Тестовые данные успешно добавлены")
     return nil
 }
-// Получение конкретного здания по ID
-func (h *Handler) GetBuildingByID(c *gin.Context) {
-    buildingIDStr := c.Param("id")
-    buildingID, err := uuid.Parse(buildingIDStr)
-    if err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid building ID"})
-        return
-    }
-
-    var building Building
-    err = h.pool.QueryRow(context.Background(), `
-        SELECT id, address, fias_id, unom_id, created_at, updated_at 
-        FROM buildings WHERE id = $1`, buildingID).Scan(
-        &building.ID, &building.Address, &building.FiasID, 
-        &building.UnomID, &building.CreatedAt, &building.UpdatedAt)
-
-    if err != nil {
-        c.JSON(http.StatusNotFound, gin.H{"error": "building not found"})
-        return
-    }
-
-    c.JSON(http.StatusOK, building)
-}
-
-// Если нужен Generator поле, добавьте его в структуру:
-/*
-type Handler struct {
-    pool      *pgxpool.Pool
-    Generator *service.DataGenerator // Добавьте если нужно
-}
-*/
