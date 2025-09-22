@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мониторинг потребления воды</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <h1>🏢 Система мониторинга МКД</h1>
+            <nav class="nav">
+                <a href="#buildings" class="nav-link active">Здания</a>
+                <a href="#analysis" class="nav-link">Аналитика</a>
+                <a href="#realtime" class="nav-link">Реальное время</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <!-- Секция списка зданий -->
+        <section id="buildings" class="section active">
+            <div class="container">
+                <h2>Список зданий</h2>
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="Поиск по адресу...">
+                </div>
+                <div id="buildingsList" class="buildings-grid"></div>
+            </div>
+        </section>
+
+        <!-- Секция аналитики -->
+        <section id="analysis" class="section">
+            <div class="container">
+                <h2>Анализ потребления</h2>
+                <div class="analysis-controls">
+                    <select id="buildingSelect">
+                        <option value="">Выберите здание...</option>
+                    </select>
+                    <select id="periodSelect">
+                        <option value="7">7 дней</option>
+                        <option value="30" selected>30 дней</option>
+                        <option value="90">90 дней</option>
+                    </select>
+                    <button id="analyzeBtn" class="btn-primary">Анализировать</button>
+                </div>
+                <div id="analysisResults" class="analysis-results"></div>
+            </div>
+        </section>
+
+        <!-- Секция реального времени -->
+        <section id="realtime" class="section">
+            <div class="container">
+                <h2>Мониторинг в реальном времени</h2>
+                <div class="realtime-grid">
+                    <div class="metric-card">
+                        <h3>ХВС - Подача</h3>
+                        <div class="value" id="coldWaterIn">0 м³/ч</div>
+                        <div class="trend up">+5%</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>ХВС - Возврат</h3>
+                        <div class="value" id="coldWaterOut">0 м³/ч</div>
+                        <div class="trend down">-2%</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>ГВС - Канал 1</h3>
+                        <div class="value" id="hotWaterCh1">0 м³/ч</div>
+                        <div class="trend stable">0%</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>ГВС - Канал 2</h3>
+                        <div class="value" id="hotWaterCh2">0 м³/ч</div>
+                        <div class="trend up">+3%</div>
+                    </div>
+                </div>
+                <div class="charts-container">
+                    <canvas id="realtimeChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Модальное окно деталей здания -->
+    <div id="buildingModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Детальная информация</h2>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/charts.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

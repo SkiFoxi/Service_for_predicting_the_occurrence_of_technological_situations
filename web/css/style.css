@@ -1,0 +1,255 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #f5f6fa;
+    color: #2c3e50;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+/* Header */
+.header {
+    background: #34495e;
+    color: white;
+    padding: 1rem 0;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.header h1 {
+    display: inline-block;
+    margin-right: 2rem;
+}
+
+.nav {
+    display: inline-block;
+}
+
+.nav-link {
+    color: #bdc3c7;
+    text-decoration: none;
+    margin: 0 1rem;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    transition: all 0.3s;
+}
+
+.nav-link.active,
+.nav-link:hover {
+    background: #2c3e50;
+    color: #ecf0f1;
+}
+
+/* Sections */
+.section {
+    display: none;
+    padding: 2rem 0;
+}
+
+.section.active {
+    display: block;
+}
+
+/* Buildings Grid */
+.buildings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.building-card {
+    background: white;
+    border-radius: 10px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    transition: transform 0.3s;
+    cursor: pointer;
+}
+
+.building-card:hover {
+    transform: translateY(-5px);
+}
+
+.building-card h3 {
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+}
+
+.building-card .address {
+    color: #7f8c8d;
+    margin-bottom: 1rem;
+}
+
+.building-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9rem;
+    color: #95a5a6;
+}
+
+/* Analysis */
+.analysis-controls {
+    display: flex;
+    gap: 1rem;
+    margin: 2rem 0;
+    flex-wrap: wrap;
+}
+
+.analysis-controls select,
+.analysis-controls button {
+    padding: 0.5rem 1rem;
+    border: 1px solid #bdc3c7;
+    border-radius: 5px;
+    font-size: 1rem;
+}
+
+.btn-primary {
+    background: #3498db;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.btn-primary:hover {
+    background: #2980b9;
+}
+
+.analysis-results {
+    background: white;
+    border-radius: 10px;
+    padding: 2rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.metric {
+    display: flex;
+    justify-content: space-between;
+    margin: 1rem 0;
+    padding: 1rem;
+    background: #ecf0f1;
+    border-radius: 5px;
+}
+
+/* Real-time */
+.realtime-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin: 2rem 0;
+}
+
+.metric-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.metric-card h3 {
+    color: #7f8c8d;
+    margin-bottom: 1rem;
+}
+
+.value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.trend {
+    margin-top: 0.5rem;
+    font-weight: bold;
+}
+
+.trend.up { color: #27ae60; }
+.trend.down { color: #e74c3c; }
+.trend.stable { color: #f39c12; }
+
+.charts-container {
+    background: white;
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-top: 2rem;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background: white;
+    margin: 5% auto;
+    padding: 2rem;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 600px;
+    position: relative;
+}
+
+.close {
+    position: absolute;
+    right: 1rem;
+    top: 1rem;
+    font-size: 2rem;
+    cursor: pointer;
+}
+
+/* Search */
+.search-box {
+    margin: 1rem 0;
+}
+
+.search-box input {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    border: 1px solid #bdc3c7;
+    border-radius: 5px;
+    font-size: 1rem;
+}
+
+/* Loading */
+.loading {
+    text-align: center;
+    padding: 2rem;
+    color: #7f8c8d;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .header h1 {
+        display: block;
+        margin-bottom: 1rem;
+    }
+    
+    .nav {
+        display: block;
+    }
+    
+    .analysis-controls {
+        flex-direction: column;
+    }
+    
+    .buildings-grid {
+        grid-template-columns: 1fr;
+    }
+}
