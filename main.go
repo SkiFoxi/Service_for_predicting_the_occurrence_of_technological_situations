@@ -5,8 +5,6 @@ import (
     "log"
     "net/http"
     "os"
-    "os/signal"
-    "syscall"
     "time"
 
     "service/internal/api"
@@ -16,6 +14,7 @@ import (
     "github.com/gin-gonic/gin"
     "github.com/gin-contrib/cors"
 )
+
 
 func main() {
     // Конфигурация базы данных
@@ -54,9 +53,9 @@ func main() {
     // Создание HTTP сервера
     router := gin.Default()
 
-    // Настройка CORS для работы с фронтендом
+    // Настройка CORS
     router.Use(cors.New(cors.Config{
-        AllowOrigins:     []string{"*"}, // Разрешаем все origins для разработки
+        AllowOrigins:     []string{"*"},
         AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
         AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
         ExposeHeaders:    []string{"Content-Length"},
@@ -64,13 +63,13 @@ func main() {
         MaxAge: 12 * time.Hour,
     }))
 
-    // Правильно настраиваем статические файлы
+    // Статические файлы
     router.Static("/css", "./web/css")
     router.Static("/js", "./web/js")
     router.Static("/assets", "./web/assets")
     
     // HTML файлы
-    router.LoadHTMLFiles("./web/index.html")
+    router.LoadHTMLGlob("./web/*.html")
 
     // Инициализация обработчиков
     handler := api.NewHandler(pool)
@@ -81,53 +80,54 @@ func main() {
         c.HTML(http.StatusOK, "index.html", nil)
     })
 
-    // API маршруты
+    // API маршруты - ПРОСТАЯ ВЕРСИЯ для теста
     apiGroup := router.Group("/api")
     {
-        apiGroup.GET("/buildings", handler.GetBuildings)
-        apiGroup.GET("/buildings/:id", handler.GetBuildingByID)
+
         apiGroup.GET("/analysis/:id", handler.AnalyzeBuilding)
-        apiGroup.POST("/seed-data", handler.SeedTestData)
-        apiGroup.GET("/realtime/:id", handler.GetRealtimeData)
+        apiGroup.GET("/buildings", handler.GetBuildings)
         
-        // Управление генерацией данных
-        apiGroup.POST("/generator/start", handler.StartGenerator)
-        apiGroup.POST("/generator/stop", handler.StopGenerator)
-        apiGroup.GET("/generator/status", handler.GetGeneratorStatus)
-    }
-
-    // Health check
-    router.GET("/health", func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{
-            "status":    "ok",
-            "database":  "connected",
-            "timestamp": time.Now().Format(time.RFC3339),
+        // Простой тестовый эндпоинт
+        apiGroup.GET("/test", func(c *gin.Context) {
+            c.JSON(http.StatusOK, gin.H{
+                "status": "ok", 
+                "message": "API is working",
+                "timestamp": time.Now().Format(time.RFC3339),
+            })
         })
-    })
-
-    // Обработка graceful shutdown
-    setupGracefulShutdown(dataGenerator)
+        
+        // Health check расширенный
+        apiGroup.GET("/health", func(c *gin.Context) {
+            // Проверяем соединение с БД
+            var dbStatus string
+            var buildingCount int
+            
+            err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM buildings").Scan(&buildingCount)
+            if err != nil {
+                dbStatus = "error: " + err.Error()
+                buildingCount = 0
+            } else {
+                dbStatus = "connected"
+            }
+            
+            c.JSON(http.StatusOK, gin.H{
+                "status": "ok",
+                "database": dbStatus,
+                "buildings_count": buildingCount,
+                "timestamp": time.Now().Format(time.RFC3339),
+            })
+        })
+    }
 
     // Запуск сервера
     log.Println("Server starting on :8080")
-    log.Println("Frontend available at: http://localhost:8080")
-    log.Println("API available at: http://localhost:8080/api")
+    log.Println("Available endpoints:")
+    log.Println("  http://localhost:8080/ - Frontend")
+    log.Println("  http://localhost:8080/api/buildings - Buildings API")
+    log.Println("  http://localhost:8080/api/test - Test API")
+    log.Println("  http://localhost:8080/api/health - Health check")
     
     if err := router.Run(":8080"); err != nil {
         log.Fatalf("Failed to start server: %v", err)
     }
-}
-
-func setupGracefulShutdown(generator *service.DataGenerator) {
-    quit := make(chan os.Signal, 1)
-    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-    
-    go func() {
-        <-quit
-        log.Println("Shutting down server...")
-        if generator != nil {
-            generator.Stop()
-        }
-        os.Exit(0)
-    }()
 }
