@@ -441,6 +441,24 @@ body {
     font-style: italic;
 }
 
+/* Добавьте в style.css */
+.status-warning {
+    color: var(--warning-color);
+}
+
+.status-unknown {
+    color: var(--text-light);
+}
+
+.warning-banner {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    color: #856404;
+}
+
 /* Status Indicators */
 .status-normal { color: var(--success-color); }
 .status-leak { color: var(--danger-color); }
