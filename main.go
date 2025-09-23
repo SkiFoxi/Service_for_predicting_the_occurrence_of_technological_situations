@@ -80,6 +80,10 @@ func main() {
         apiGroup.POST("/generator/start", handler.StartGenerator)
         apiGroup.POST("/generator/stop", handler.StopGenerator)
         apiGroup.GET("/generator/status", handler.GetGeneratorStatus)
+        apiGroup.GET("/debug/:id", handler.DebugData)
+        apiGroup.POST("/generate-history", handler.GenerateHistory)
+        apiGroup.POST("/create-test-buildings", handler.CreateTestBuildings)
+        apiGroup.POST("/generate-complete-history", handler.GenerateCompleteHistoricalData)
         
         // Простой тестовый эндпоинт
         apiGroup.GET("/test", func(c *gin.Context) {

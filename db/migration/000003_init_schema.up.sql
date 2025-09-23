@@ -51,6 +51,41 @@ CREATE TABLE hot_water_meters (
     UNIQUE(building_id, timestamp)
 );
 
+-- Таблица температурных данных ГВС
+CREATE TABLE temperature_readings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    building_id UUID NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    supply_temp INTEGER NOT NULL,  -- температура подачи (°C)
+    return_temp INTEGER NOT NULL,  -- температура возврата (°C)
+    delta_temp INTEGER NOT NULL,   -- разница температур (°C)
+    timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    
+    UNIQUE(building_id, timestamp)
+);
+
+-- Таблица данных о насосах
+CREATE TABLE pump_data (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    building_id UUID NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    pump_number TEXT NOT NULL,           -- номер насоса
+    status TEXT NOT NULL,                -- normal, warning, critical
+    operating_hours INTEGER NOT NULL,    -- наработка в часах
+    pressure_input INTEGER NOT NULL,     -- давление на входе (бар)
+    pressure_output INTEGER NOT NULL,    -- давление на выходе (бар)
+    vibration_level INTEGER NOT NULL,    -- уровень вибрации
+    timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    
+    UNIQUE(building_id, pump_number, timestamp)
+);
+
+-- Индексы для новых таблиц
+CREATE INDEX idx_temperature_readings_timestamp ON temperature_readings(timestamp);
+CREATE INDEX idx_temperature_readings_building_id ON temperature_readings(building_id);
+CREATE INDEX idx_pump_data_timestamp ON pump_data(timestamp);
+CREATE INDEX idx_pump_data_building_id ON pump_data(building_id);
+CREATE INDEX idx_pump_data_status ON pump_data(status);
 -- Создаем индексы для ускорения запросов
 CREATE INDEX idx_cold_water_meters_timestamp ON cold_water_meters(timestamp);
 CREATE INDEX idx_hot_water_meters_timestamp ON hot_water_meters(timestamp);

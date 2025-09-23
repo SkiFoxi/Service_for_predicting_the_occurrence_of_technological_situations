@@ -3,7 +3,6 @@ package service
 import (
     "context"
     "fmt"
-    "math"
     "math/rand"
     "time"
 
@@ -11,7 +10,6 @@ import (
     "github.com/google/uuid"
 )
 
-// Расширенная структура анализа с предсказаниями
 type ConsumptionAnalysis struct {
     BuildingID           uuid.UUID `json:"building_id"`
     Period               string    `json:"period"`
@@ -21,13 +19,34 @@ type ConsumptionAnalysis struct {
     DifferencePercent    float64   `json:"difference_percent"`
     HasAnomalies         bool      `json:"has_anomalies"`
     AnomalyCount         int       `json:"anomaly_count"`
-    
-    // Новые поля по совету учителя
-    WaterBalanceStatus   string    `json:"water_balance_status"`  // "normal", "leak", "error"
-    TemperatureStatus    string    `json:"temperature_status"`    // "normal", "warning", "critical"
-    PumpStatus           string    `json:"pump_status"`           // "normal", "maintenance_soon", "maintenance_required"
-    PumpOperatingHours   int       `json:"pump_operating_hours"`  // наработка часов насоса
-    Recommendations      []string  `json:"recommendations"`       // рекомендации
+    WaterBalanceStatus   string    `json:"water_balance_status"`
+    TemperatureStatus    string    `json:"temperature_status"`
+    PumpStatus           string    `json:"pump_status"`
+    PumpOperatingHours   int       `json:"pump_operating_hours"`
+    Recommendations      []string  `json:"recommendations"`
+    DataSource           string    `json:"data_source"`
+    TemperatureData      *TemperatureData `json:"temperature_data,omitempty"`
+    PumpData             *PumpAnalysis    `json:"pump_data,omitempty"`
+}
+
+type TemperatureData struct {
+    AvgSupplyTemp int     `json:"avg_supply_temp"`
+    AvgReturnTemp int     `json:"avg_return_temp"`
+    AvgDeltaTemp  int     `json:"avg_delta_temp"`
+    MinDeltaTemp  int     `json:"min_delta_temp"`
+    MaxDeltaTemp  int     `json:"max_delta_temp"`
+    RecordsCount  int     `json:"records_count"`
+}
+
+type PumpAnalysis struct {
+    TotalPumps        int     `json:"total_pumps"`
+    NormalPumps       int     `json:"normal_pumps"`
+    WarningPumps      int     `json:"warning_pumps"`
+    CriticalPumps     int     `json:"critical_pumps"`
+    AvgOperatingHours int     `json:"avg_operating_hours"`
+    MaxOperatingHours int     `json:"max_operating_hours"`
+    PressureStatus    string  `json:"pressure_status"`
+    VibrationStatus   string  `json:"vibration_status"`
 }
 
 type Analyzer struct {
@@ -42,37 +61,291 @@ func (a *Analyzer) AnalyzeConsumption(ctx context.Context, buildingID uuid.UUID,
     endDate := time.Now()
     startDate := endDate.AddDate(0, 0, -days)
 
-    // Получаем данные по ХВС
-    coldWater, err := a.getColdWaterData(ctx, buildingID, startDate, endDate)
+    // Получаем все данные из БД
+    totalColdWater, totalHotWater, coldRecords, hotRecords, hasWaterData, err := a.getWaterDataFromDB(ctx, buildingID, startDate, endDate)
     if err != nil {
-        return nil, fmt.Errorf("get cold water data: %w", err)
+        return nil, fmt.Errorf("get water data from DB: %w", err)
     }
 
-    // Получаем данные по ГВС
-    hotWater, err := a.getHotWaterData(ctx, buildingID, startDate, endDate)
+    // Получаем температурные данные из БД
+    tempData, hasTempData, err := a.getTemperatureData(ctx, buildingID, startDate, endDate)
     if err != nil {
-        return nil, fmt.Errorf("get hot water data: %w", err)
+        return nil, fmt.Errorf("get temperature data from DB: %w", err)
     }
 
-    // Анализируем данные с учетом советов учителя
-    analysis := a.analyzeWithPredictions(coldWater, hotWater, buildingID, startDate, endDate)
+    // Получаем данные насосов из БД
+    pumpData, hasPumpData, err := a.getPumpData(ctx, buildingID, startDate, endDate)
+    if err != nil {
+        return nil, fmt.Errorf("get pump data from DB: %w", err)
+    }
+
+    var analysis *ConsumptionAnalysis
+    var dataSource string
+
+    if hasWaterData {
+        // Используем реальные данные из БД
+        analysis = a.analyzeRealData(totalColdWater, totalHotWater, coldRecords, hotRecords, tempData, pumpData, buildingID, startDate, endDate)
+        dataSource = "database"
+        
+        // Добавляем информацию о качестве данных
+        infoMsg := fmt.Sprintf("📊 Данные основаны на %d записях ХВС и %d записях ГВС из БД", coldRecords, hotRecords)
+        if hasTempData {
+            infoMsg += fmt.Sprintf(", %d температурных записях", tempData.RecordsCount)
+        }
+        if hasPumpData {
+            infoMsg += fmt.Sprintf(", %d насосах", pumpData.TotalPumps)
+        }
+        
+        analysis.Recommendations = append([]string{infoMsg}, analysis.Recommendations...)
+        
+    } else {
+        // Если данных нет, используем реалистичные оценки
+        analysis = a.analyzeEstimatedData(buildingID, days)
+        dataSource = "estimated"
+    }
+
+    analysis.DataSource = dataSource
     
+    // Добавляем детальные данные если они есть
+    if hasTempData {
+        analysis.TemperatureData = tempData
+    }
+    if hasPumpData {
+        analysis.PumpData = pumpData
+    }
+
     return analysis, nil
 }
 
-func (a *Analyzer) analyzeWithPredictions(coldWater, hotWater []map[string]interface{}, buildingID uuid.UUID, start, end time.Time) *ConsumptionAnalysis {
-    // Базовые расчеты
-    totalColdWater := 0
-    for _, data := range coldWater {
-        if flowRate, ok := data["flow_rate"].(int); ok {
-            totalColdWater += flowRate
+// Получение суммарного расхода ХВС за период
+func (a *Analyzer) getTotalColdWater(ctx context.Context, buildingID uuid.UUID, start, end time.Time) (int, error) {
+    var totalFlow int
+    
+    err := a.pool.QueryRow(ctx, `
+        SELECT COALESCE(SUM(cwm.flow_rate), 0)
+        FROM cold_water_meters cwm
+        JOIN itp i ON cwm.itp_id = i.id
+        WHERE i.building_id = $1 
+        AND cwm.timestamp BETWEEN $2 AND $3`,
+        buildingID, start, end).Scan(&totalFlow)
+    
+    if err != nil {
+        return 0, fmt.Errorf("get total cold water: %w", err)
+    }
+    
+    return totalFlow, nil
+}
+
+// Получение суммарного расхода ГВС за период
+func (a *Analyzer) getTotalHotWater(ctx context.Context, buildingID uuid.UUID, start, end time.Time) (int, error) {
+    var totalFlow int
+    
+    err := a.pool.QueryRow(ctx, `
+        SELECT COALESCE(SUM(flow_rate_ch1 + flow_rate_ch2), 0)
+        FROM hot_water_meters 
+        WHERE building_id = $1 
+        AND timestamp BETWEEN $2 AND $3`,
+        buildingID, start, end).Scan(&totalFlow)
+    
+    if err != nil {
+        return 0, fmt.Errorf("get total hot water: %w", err)
+    }
+    
+    return totalFlow, nil
+}
+
+// Получение температурных данных из БД
+func (a *Analyzer) getTemperatureData(ctx context.Context, buildingID uuid.UUID, start, end time.Time) (*TemperatureData, bool, error) {
+    var tempData TemperatureData
+    
+    // Получаем средние температуры за период
+    err := a.pool.QueryRow(ctx, `
+        SELECT 
+            COALESCE(AVG(supply_temp), 0)::int,
+            COALESCE(AVG(return_temp), 0)::int,
+            COALESCE(AVG(delta_temp), 0)::int,
+            COALESCE(MIN(delta_temp), 0)::int,
+            COALESCE(MAX(delta_temp), 0)::int,
+            COUNT(*)
+        FROM temperature_readings 
+        WHERE building_id = $1 
+        AND timestamp BETWEEN $2 AND $3`,
+        buildingID, start, end).Scan(
+            &tempData.AvgSupplyTemp,
+            &tempData.AvgReturnTemp,
+            &tempData.AvgDeltaTemp,
+            &tempData.MinDeltaTemp,
+            &tempData.MaxDeltaTemp,
+            &tempData.RecordsCount)
+    
+    if err != nil {
+        return nil, false, fmt.Errorf("get temperature data: %w", err)
+    }
+
+    hasData := tempData.RecordsCount > 0
+    return &tempData, hasData, nil
+}
+
+// Получение данных насосов из БД
+func (a *Analyzer) getPumpData(ctx context.Context, buildingID uuid.UUID, start, end time.Time) (*PumpAnalysis, bool, error) {
+    var pumpData PumpAnalysis
+    
+    // Получаем последние данные по каждому насосу
+    rows, err := a.pool.Query(ctx, `
+        SELECT DISTINCT ON (pump_number)
+            pump_number, status, operating_hours, pressure_input, pressure_output, vibration_level
+        FROM pump_data 
+        WHERE building_id = $1 
+        AND timestamp BETWEEN $2 AND $3
+        ORDER BY pump_number, timestamp DESC`,
+        buildingID, start, end)
+    
+    if err != nil {
+        return nil, false, fmt.Errorf("get pump data: %w", err)
+    }
+    defer rows.Close()
+
+    var totalOperatingHours int
+    var maxOperatingHours int
+    var pressureReadings, vibrationReadings int
+    
+    for rows.Next() {
+        var pumpNumber, status string
+        var operatingHours, pressureInput, pressureOutput, vibrationLevel int
+        
+        err := rows.Scan(&pumpNumber, &status, &operatingHours, &pressureInput, &pressureOutput, &vibrationLevel)
+        if err != nil {
+            continue
+        }
+        
+        pumpData.TotalPumps++
+        totalOperatingHours += operatingHours
+        
+        if operatingHours > maxOperatingHours {
+            maxOperatingHours = operatingHours
+        }
+        
+        switch status {
+        case "normal":
+            pumpData.NormalPumps++
+        case "warning":
+            pumpData.WarningPumps++
+        case "critical":
+            pumpData.CriticalPumps++
+        }
+        
+        // Анализ давления
+        pressureDiff := pressureOutput - pressureInput
+        if pressureDiff >= 1 && pressureDiff <= 3 {
+            pressureReadings++
+        }
+        
+        // Анализ вибрации
+        if vibrationLevel <= 5 {
+            vibrationReadings++
+        }
+    }
+    
+    if pumpData.TotalPumps > 0 {
+        pumpData.AvgOperatingHours = totalOperatingHours / pumpData.TotalPumps
+        pumpData.MaxOperatingHours = maxOperatingHours
+        
+        // Определяем статус давления
+        pressureRatio := float64(pressureReadings) / float64(pumpData.TotalPumps)
+        if pressureRatio >= 0.8 {
+            pumpData.PressureStatus = "normal"
+        } else if pressureRatio >= 0.5 {
+            pumpData.PressureStatus = "warning"
+        } else {
+            pumpData.PressureStatus = "critical"
+        }
+        
+        // Определяем статус вибрации
+        vibrationRatio := float64(vibrationReadings) / float64(pumpData.TotalPumps)
+        if vibrationRatio >= 0.8 {
+            pumpData.VibrationStatus = "normal"
+        } else if vibrationRatio >= 0.5 {
+            pumpData.VibrationStatus = "warning"
+        } else {
+            pumpData.VibrationStatus = "critical"
+        }
+    }
+    
+    hasData := pumpData.TotalPumps > 0
+    return &pumpData, hasData, nil
+}
+
+// Получение количества записей для анализа качества данных
+func (a *Analyzer) getDataQuality(ctx context.Context, buildingID uuid.UUID, start, end time.Time) (int, int, error) {
+    var coldRecords, hotRecords int
+    
+    err := a.pool.QueryRow(ctx, `
+        SELECT COUNT(*)
+        FROM cold_water_meters cwm
+        JOIN itp i ON cwm.itp_id = i.id
+        WHERE i.building_id = $1 
+        AND cwm.timestamp BETWEEN $2 AND $3`,
+        buildingID, start, end).Scan(&coldRecords)
+    
+    if err != nil {
+        return 0, 0, err
+    }
+    
+    err = a.pool.QueryRow(ctx, `
+        SELECT COUNT(*)
+        FROM hot_water_meters 
+        WHERE building_id = $1 
+        AND timestamp BETWEEN $2 AND $3`,
+        buildingID, start, end).Scan(&hotRecords)
+    
+    if err != nil {
+        return 0, 0, err
+    }
+    
+    return coldRecords, hotRecords, nil
+}
+
+// Получение водных данных из БД
+func (a *Analyzer) getWaterDataFromDB(ctx context.Context, buildingID uuid.UUID, start, end time.Time) (int, int, int, int, bool, error) {
+    totalColdWater, err := a.getTotalColdWater(ctx, buildingID, start, end)
+    if err != nil {
+        return 0, 0, 0, 0, false, err
+    }
+
+    totalHotWater, err := a.getTotalHotWater(ctx, buildingID, start, end)
+    if err != nil {
+        return 0, 0, 0, 0, false, err
+    }
+
+    coldRecords, hotRecords, err := a.getDataQuality(ctx, buildingID, start, end)
+    if err != nil {
+        return 0, 0, 0, 0, false, err
+    }
+
+    requiredRecords := 7
+    hasEnoughData := coldRecords >= requiredRecords && hotRecords >= requiredRecords
+    
+    return totalColdWater, totalHotWater, coldRecords, hotRecords, hasEnoughData, nil
+}
+
+// Анализ РЕАЛЬНЫХ данных из БД
+func (a *Analyzer) analyzeRealData(totalColdWater, totalHotWater, coldRecords, hotRecords int, 
+    tempData *TemperatureData, pumpData *PumpAnalysis, buildingID uuid.UUID, start, end time.Time) *ConsumptionAnalysis {
+    
+    // Рассчитываем средние значения для анализа воды
+    avgColdWater := 0
+    if coldRecords > 0 {
+        hours := int(end.Sub(start).Hours())
+        if hours > 0 {
+            avgColdWater = totalColdWater / hours
         }
     }
 
-    totalHotWater := 0
-    for _, data := range hotWater {
-        if totalFlow, ok := data["total_flow"].(int); ok {
-            totalHotWater += totalFlow
+    avgHotWater := 0
+    if hotRecords > 0 {
+        hours := int(end.Sub(start).Hours())
+        if hours > 0 {
+            avgHotWater = totalHotWater / hours
         }
     }
 
@@ -82,20 +355,13 @@ func (a *Analyzer) analyzeWithPredictions(coldWater, hotWater []map[string]inter
         differencePercent = (float64(difference) / float64(totalColdWater)) * 100
     }
 
-    // 1. Анализ баланса воды
-    waterBalanceStatus := a.analyzeWaterBalance(totalColdWater, totalHotWater, difference)
-    
-    // 2. Анализ температуры
-    temperatureStatus := a.analyzeTemperature(hotWater)
-    
-    // 3. Анализ состояния насосов
-    pumpStatus, operatingHours := a.analyzePumpCondition(buildingID)
-    
-    // 4. Поиск аномалий
-    hasAnomalies, anomalyCount := a.detectAnomalies(coldWater, hotWater, waterBalanceStatus, temperatureStatus)
-    
-    // 5. Формирование рекомендаций
-    recommendations := a.generateRecommendations(waterBalanceStatus, temperatureStatus, pumpStatus, operatingHours)
+    // Анализ на основе РЕАЛЬНЫХ данных
+    waterBalanceStatus := a.analyzeWaterBalanceReal(avgColdWater, avgHotWater, difference, coldRecords, hotRecords)
+    temperatureStatus := a.analyzeTemperatureReal(tempData)
+    pumpStatus, operatingHours := a.analyzePumpConditionReal(pumpData)
+    hasAnomalies, anomalyCount := a.detectAnomaliesReal(totalColdWater, totalHotWater, waterBalanceStatus, temperatureStatus, pumpStatus)
+    recommendations := a.generateRecommendationsReal(waterBalanceStatus, temperatureStatus, pumpStatus, operatingHours, 
+        totalColdWater, totalHotWater, coldRecords, hotRecords, tempData, pumpData)
 
     return &ConsumptionAnalysis{
         BuildingID:         buildingID,
@@ -114,164 +380,198 @@ func (a *Analyzer) analyzeWithPredictions(coldWater, hotWater []map[string]inter
     }
 }
 
-// 1. Анализ баланса воды
-func (a *Analyzer) analyzeWaterBalance(coldWaterIn, hotWaterTotal, difference int) string {
-    expectedReturn := float64(coldWaterIn) * 0.8
-    actualConsumption := float64(coldWaterIn) - expectedReturn
-    tolerance := expectedReturn * 0.15
-    
-    if math.Abs(float64(hotWaterTotal)-actualConsumption) > tolerance {
-        return "leak"
-    }
-    
-    if difference > int(expectedReturn*0.2) {
+// Анализ баланса на основе РЕАЛЬНЫХ данных
+func (a *Analyzer) analyzeWaterBalanceReal(avgColdWater, avgHotWater, difference, coldRecords, hotRecords int) string {
+    if coldRecords == 0 || hotRecords == 0 {
         return "error"
     }
+
+    if avgHotWater > avgColdWater {
+        return "leak"
+    }
+
+    consumptionRatio := float64(avgHotWater) / float64(avgColdWater)
     
+    if consumptionRatio > 0.6 {
+        return "leak"
+    } else if consumptionRatio < 0.2 {
+        return "error"
+    }
+
     return "normal"
 }
 
-// 2. Анализ температуры
-func (a *Analyzer) analyzeTemperature(hotWaterData []map[string]interface{}) string {
-    if rand.Float32() < 0.7 {
+// Анализ температуры на основе РЕАЛЬНЫХ данных из БД
+func (a *Analyzer) analyzeTemperatureReal(tempData *TemperatureData) string {
+    if tempData == nil || tempData.RecordsCount == 0 {
+        return "unknown" // Данных нет
+    }
+
+    // Норма ΔT для ГВС: 17-23°C
+    if tempData.AvgDeltaTemp >= 17 && tempData.AvgDeltaTemp <= 23 {
         return "normal"
-    }
-    
-    if rand.Float32() < 0.9 {
+    } else if tempData.AvgDeltaTemp >= 15 && tempData.AvgDeltaTemp <= 25 {
         return "warning"
+    } else {
+        return "critical"
     }
-    
-    return "critical"
 }
 
-// 3. Анализ состояния насосов
-func (a *Analyzer) analyzePumpCondition(buildingID uuid.UUID) (string, int) {
-    operatingHours := 5000 + rand.Intn(7000)
-    
-    if operatingHours > 10000 {
-        return "maintenance_required", operatingHours
-    } else if operatingHours > 8000 {
-        return "maintenance_soon", operatingHours
+// Анализ насосов на основе РЕАЛЬНЫХ данных из БД
+func (a *Analyzer) analyzePumpConditionReal(pumpData *PumpAnalysis) (string, int) {
+    if pumpData == nil || pumpData.TotalPumps == 0 {
+        return "unknown", 0 // Данных нет
     }
-    
-    return "normal", operatingHours
+
+    // Определяем общий статус насосов
+    if pumpData.CriticalPumps > 0 {
+        return "critical", pumpData.MaxOperatingHours
+    } else if pumpData.WarningPumps > 0 {
+        return "warning", pumpData.MaxOperatingHours
+    } else {
+        return "normal", pumpData.MaxOperatingHours
+    }
 }
 
-// 4. Детектор аномалий
-func (a *Analyzer) detectAnomalies(coldWater, hotWater []map[string]interface{}, waterBalance, temperatureStatus string) (bool, int) {
+// Детектор аномалий на основе реальных данных
+func (a *Analyzer) detectAnomaliesReal(totalColdWater, totalHotWater int, waterBalance, temperatureStatus, pumpStatus string) (bool, int) {
     anomalyCount := 0
-    
-    for _, data := range coldWater {
-        if flowRate, ok := data["flow_rate"].(int); ok {
-            if flowRate > 200 || flowRate < 5 {
-                anomalyCount++
-            }
-        }
-    }
-    
-    if waterBalance == "leak" || waterBalance == "error" {
+
+    if totalColdWater < 0 || totalColdWater > 1000000 {
         anomalyCount++
     }
-    
-    if temperatureStatus == "critical" {
+
+    if totalHotWater < 0 || totalHotWater > 1000000 {
         anomalyCount++
     }
-    
+
+    if totalHotWater > totalColdWater {
+        anomalyCount++
+    }
+
+    if waterBalance != "normal" {
+        anomalyCount++
+    }
+
+    if temperatureStatus == "critical" || temperatureStatus == "warning" {
+        anomalyCount++
+    }
+
+    if pumpStatus == "critical" || pumpStatus == "warning" {
+        anomalyCount++
+    }
+
     return anomalyCount > 0, anomalyCount
 }
 
-// 5. Генерация рекомендаций
-func (a *Analyzer) generateRecommendations(waterBalance, temperature, pumpStatus string, operatingHours int) []string {
-    var recommendations []string
+// Реальные рекомендации на основе данных
+func (a *Analyzer) generateRecommendationsReal(waterBalance, temperatureStatus, pumpStatus string, 
+    operatingHours, coldWater, hotWater, coldRecords, hotRecords int, 
+    tempData *TemperatureData, pumpData *PumpAnalysis) []string {
     
+    var recommendations []string
+
+    if coldRecords == 0 || hotRecords == 0 {
+        return []string{"Внимание: недостаточно данных для анализа. Рекомендуется проверить работу счетчиков."}
+    }
+
+    // Информация о данных
+    recommendations = append(recommendations, 
+        fmt.Sprintf("Проанализировано записей: ХВС - %d, ГВС - %d", coldRecords, hotRecords))
+
+    // Анализ баланса
     switch waterBalance {
     case "leak":
-        recommendations = append(recommendations, "🚨 Обнаружена возможная утечка! Проверить систему")
+        recommendations = append(recommendations, 
+            "🚨 Обнаружена аномалия баланса: возможна утечка или некорректные показания")
     case "error":
-        recommendations = append(recommendations, "⚠️ Большое отклонение в балансе воды. Требуется диагностика")
-    }
-    
-    switch temperature {
-    case "warning":
-        recommendations = append(recommendations, "🌡️ Температурный режим близок к критическому")
-    case "critical":
-        recommendations = append(recommendations, "🔥 Критическое отклонение температуры! Срочная проверка")
-    }
-    
-    switch pumpStatus {
-    case "maintenance_soon":
         recommendations = append(recommendations, 
-            fmt.Sprintf("⚙️ Насос отработал %d часов. Запланировать ТО в ближайшее время", operatingHours))
-    case "maintenance_required":
+            "⚠️ Ошибка в данных. Проверить корректность показаний счетчиков.")
+    case "normal":
         recommendations = append(recommendations, 
-            fmt.Sprintf("🛠️ Насос отработал %d часов! Требуется срочное техническое обслуживание", operatingHours))
+            fmt.Sprintf("✅ Баланс в норме. Расход: ХВС %d м³, ГВС %d м³", coldWater, hotWater))
     }
-    
-    if len(recommendations) == 0 {
-        recommendations = append(recommendations, "✅ Система работает в штатном режиме")
+
+    // Анализ температуры
+    if tempData != nil && tempData.RecordsCount > 0 {
+        switch temperatureStatus {
+        case "normal":
+            recommendations = append(recommendations, 
+                fmt.Sprintf("✅ Температурный режим в норме (ΔT=%d°C)", tempData.AvgDeltaTemp))
+        case "warning":
+            recommendations = append(recommendations, 
+                fmt.Sprintf("⚠️ Температурный режим требует внимания (ΔT=%d°C)", tempData.AvgDeltaTemp))
+        case "critical":
+            recommendations = append(recommendations, 
+                fmt.Sprintf("🚨 Критическое отклонение температуры (ΔT=%d°C)", tempData.AvgDeltaTemp))
+        }
     }
-    
+
+    // Анализ насосов
+    if pumpData != nil && pumpData.TotalPumps > 0 {
+        recommendations = append(recommendations, 
+            fmt.Sprintf("Насосы: %d нормальных, %d с предупреждением, %d критических", 
+                pumpData.NormalPumps, pumpData.WarningPumps, pumpData.CriticalPumps))
+        
+        switch pumpStatus {
+        case "normal":
+            recommendations = append(recommendations, 
+                fmt.Sprintf("✅ Состояние насосов в норме (макс. наработка: %d ч)", operatingHours))
+        case "warning":
+            recommendations = append(recommendations, 
+                fmt.Sprintf("⚠️ Требуется внимание к насосам (макс. наработка: %d ч)", operatingHours))
+        case "critical":
+            recommendations = append(recommendations, 
+                fmt.Sprintf("🚨 Срочное обслуживание насосов требуется (макс. наработка: %d ч)", operatingHours))
+        }
+        
+        if operatingHours > 8000 {
+            recommendations = append(recommendations, 
+                "⚙️ Рекомендуется плановое техническое обслуживание насосов")
+        }
+    }
+
+    if coldRecords < 24 {
+        recommendations = append(recommendations, 
+            "📉 Недостаточно данных ХВС для глубокого анализа")
+    }
+
+    if hotRecords < 24 {
+        recommendations = append(recommendations, 
+            "📉 Недостаточно данных ГВС для глубокого анализа")
+    }
+
     return recommendations
 }
 
-// Реализация методов получения данных (добавляем возвращаемые значения)
-func (a *Analyzer) getColdWaterData(ctx context.Context, buildingID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
-    rows, err := a.pool.Query(ctx, `
-        SELECT cwm.flow_rate, cwm.timestamp 
-        FROM cold_water_meters cwm
-        JOIN itp i ON cwm.itp_id = i.id
-        WHERE i.building_id = $1 AND cwm.timestamp BETWEEN $2 AND $3
-        ORDER BY cwm.timestamp`, buildingID, start, end)
+// Резервный анализ если данных нет в БД
+func (a *Analyzer) analyzeEstimatedData(buildingID uuid.UUID, days int) *ConsumptionAnalysis {
+    avgColdWater := 5 + rand.Intn(5)
+    avgHotWater := 3 + rand.Intn(3)
     
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-
-    var data []map[string]interface{}
-    for rows.Next() {
-        var flowRate int
-        var timestamp time.Time
-        err := rows.Scan(&flowRate, &timestamp)
-        if err != nil {
-            return nil, err
-        }
-        data = append(data, map[string]interface{}{
-            "flow_rate": flowRate,
-            "timestamp": timestamp,
-        })
-    }
-
-    return data, nil
-}
-
-func (a *Analyzer) getHotWaterData(ctx context.Context, buildingID uuid.UUID, start, end time.Time) ([]map[string]interface{}, error) {
-    rows, err := a.pool.Query(ctx, `
-        SELECT flow_rate_ch1, flow_rate_ch2, timestamp 
-        FROM hot_water_meters 
-        WHERE building_id = $1 AND timestamp BETWEEN $2 AND $3
-        ORDER BY timestamp`, buildingID, start, end)
+    hoursInPeriod := days * 24
+    totalColdWater := avgColdWater * hoursInPeriod
+    totalHotWater := avgHotWater * hoursInPeriod
     
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-
-    var data []map[string]interface{}
-    for rows.Next() {
-        var flowRateCh1, flowRateCh2 int
-        var timestamp time.Time
-        err := rows.Scan(&flowRateCh1, &flowRateCh2, &timestamp)
-        if err != nil {
-            return nil, err
-        }
-        data = append(data, map[string]interface{}{
-            "flow_rate_ch1": flowRateCh1,
-            "flow_rate_ch2": flowRateCh2,
-            "total_flow":    flowRateCh1 + flowRateCh2,
-            "timestamp":     timestamp,
-        })
+    difference := totalColdWater - totalHotWater
+    var differencePercent float64
+    if totalColdWater > 0 {
+        differencePercent = (float64(difference) / float64(totalColdWater)) * 100
     }
 
-    return data, nil
+    return &ConsumptionAnalysis{
+        BuildingID:         buildingID,
+        Period:             fmt.Sprintf("%d дней (оценка)", days),
+        TotalColdWater:     totalColdWater,
+        TotalHotWater:      totalHotWater,
+        Difference:         difference,
+        DifferencePercent:  differencePercent,
+        HasAnomalies:       false,
+        AnomalyCount:       0,
+        WaterBalanceStatus: "normal",
+        TemperatureStatus:  "normal",
+        PumpStatus:         "normal",
+        PumpOperatingHours: 5000 + rand.Intn(5000),
+        Recommendations:    []string{"Данные отсутствуют в системе. Показаны расчетные значения."},
+    }
 }

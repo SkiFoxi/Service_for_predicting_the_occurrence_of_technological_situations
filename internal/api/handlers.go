@@ -293,3 +293,343 @@ func (h *Handler) seedTestData() error {
     fmt.Println("Тестовые данные успешно добавлены")
     return nil
 }
+
+// Добавим в handlers.go метод для диагностики
+func (h *Handler) DebugData(c *gin.Context) {
+    buildingIDStr := c.Param("id")
+    buildingID, err := uuid.Parse(buildingIDStr)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid building ID"})
+        return
+    }
+
+    // Проверяем какие данные есть в БД
+    var coldWaterCount, hotWaterCount int
+    var latestColdWater, latestHotWater time.Time
+    
+    // Данные по ХВС
+    err = h.pool.QueryRow(context.Background(), `
+        SELECT COUNT(*), MAX(timestamp) 
+        FROM cold_water_meters cwm
+        JOIN itp i ON cwm.itp_id = i.id
+        WHERE i.building_id = $1`, buildingID).Scan(&coldWaterCount, &latestColdWater)
+    
+    // Данные по ГВС  
+    err = h.pool.QueryRow(context.Background(), `
+        SELECT COUNT(*), MAX(timestamp) 
+        FROM hot_water_meters 
+        WHERE building_id = $1`, buildingID).Scan(&hotWaterCount, &latestHotWater)
+
+    c.JSON(http.StatusOK, gin.H{
+        "building_id": buildingID,
+        "cold_water_records": coldWaterCount,
+        "hot_water_records": hotWaterCount,
+        "latest_cold_water": latestColdWater,
+        "latest_hot_water": latestHotWater,
+        "has_data": coldWaterCount > 0 && hotWaterCount > 0,
+    })
+}
+
+// Добавьте в handlers.go
+func (h *Handler) GenerateHistoricalData(c *gin.Context) {
+    daysStr := c.DefaultQuery("days", "30")
+    days, err := strconv.Atoi(daysStr)
+    if err != nil || days <= 0 {
+        days = 30
+    }
+
+    // Создаем генератор и генерируем данные
+    generator := service.NewDataGenerator(h.pool)
+    err = generator.GenerateHistoricalData(context.Background(), days)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": fmt.Sprintf("Historical data generated for %d days", days),
+        "days": days,
+    })
+}
+
+// Добавьте в handlers.go
+func (h *Handler) GenerateHistory(c *gin.Context) {
+    daysStr := c.DefaultQuery("days", "30")
+    days, err := strconv.Atoi(daysStr)
+    if err != nil || days <= 0 {
+        days = 30
+    }
+
+    // Создаем простой генератор
+    err = h.generateHistoricalData(days)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": fmt.Sprintf("Historical data generated for %d days", days),
+        "days": days,
+    })
+}
+
+func (h *Handler) generateHistoricalData(days int) error {
+    ctx := context.Background()
+    
+    // Получаем все здания
+    rows, err := h.pool.Query(ctx, "SELECT id FROM buildings")
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+
+    var buildingIDs []uuid.UUID
+    for rows.Next() {
+        var id uuid.UUID
+        if err := rows.Scan(&id); err != nil {
+            continue
+        }
+        buildingIDs = append(buildingIDs, id)
+    }
+
+    if len(buildingIDs) == 0 {
+        return fmt.Errorf("no buildings found")
+    }
+
+    baseTime := time.Now().AddDate(0, 0, -days)
+    
+    fmt.Printf("Generating historical data for %d buildings over %d days...\n", len(buildingIDs), days)
+    
+    for _, buildingID := range buildingIDs {
+        // Получаем или создаем ITP для здания
+        var itpID uuid.UUID
+        err = h.pool.QueryRow(ctx, "SELECT id FROM itp WHERE building_id = $1 LIMIT 1", buildingID).Scan(&itpID)
+        if err != nil {
+            // Создаем ITP если нет
+            itpID = uuid.New()
+            _, err = h.pool.Exec(ctx, `
+                INSERT INTO itp (id, itp_number, building_id, created_at, updated_at)
+                VALUES ($1, $2, $3, NOW(), NOW())`,
+                itpID, fmt.Sprintf("ИТП-%s", buildingID.String()[:8]), buildingID)
+            if err != nil {
+                fmt.Printf("Error creating ITP: %v\n", err)
+                continue
+            }
+        }
+
+        // Генерируем данные за каждый день
+        for i := 0; i < days; i++ {
+            currentTime := baseTime.AddDate(0, 0, i)
+            
+            // Реалистичные данные для МКД
+            hotWaterFlow1 := 2 + rand.Intn(4)  // 2-5 м³/ч
+            hotWaterFlow2 := 1 + rand.Intn(3)  // 1-3 м³/ч
+            coldWaterFlow := 3 + rand.Intn(7)  // 3-9 м³/ч
+
+            // Данные ГВС
+            _, err = h.pool.Exec(ctx, `
+                INSERT INTO hot_water_meters (id, building_id, flow_rate_ch1, flow_rate_ch2, timestamp, created_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())`,
+                uuid.New(), buildingID, hotWaterFlow1, hotWaterFlow2, currentTime)
+            
+            if err != nil {
+                fmt.Printf("Error inserting hot water data: %v\n", err)
+            }
+
+            // Данные ХВС
+            _, err = h.pool.Exec(ctx, `
+                INSERT INTO cold_water_meters (id, itp_id, flow_rate, timestamp, created_at)
+                VALUES ($1, $2, $3, $4, NOW())`,
+                uuid.New(), itpID, coldWaterFlow, currentTime)
+            
+            if err != nil {
+                fmt.Printf("Error inserting cold water data: %v\n", err)
+            }
+        }
+    }
+
+    fmt.Printf("Historical data generation completed for %d days\n", days)
+    return nil
+}
+
+// handlers.go - ДОБАВЬТЕ этот метод
+
+// Заполнение всех данных (воды, температуры, насосов)
+// handlers.go - ДОБАВЬТЕ этот метод
+
+// Заполнение всех данных (воды, температуры, насосов)
+// handlers.go - ОБНОВИТЕ этот метод
+
+// Заполнение всех данных (воды, температуры, насосов)
+func (h *Handler) GenerateCompleteHistoricalData(c *gin.Context) {
+    daysStr := c.DefaultQuery("days", "30")
+    days, err := strconv.Atoi(daysStr)
+    if err != nil || days <= 0 {
+        days = 30
+    }
+
+    ctx := context.Background()
+    
+    // Проверяем, есть ли здания
+    var buildingCount int
+    err = h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM buildings").Scan(&buildingCount)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error: " + err.Error()})
+        return
+    }
+    
+    // Если зданий нет, создаем их
+    if buildingCount == 0 {
+        fmt.Println("No buildings found, creating test buildings...")
+        err = h.createTestBuildings(ctx)
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create buildings: " + err.Error()})
+            return
+        }
+        buildingCount = 3 //因为我们创建了3个测试建筑
+    }
+
+    generator := service.NewDataGenerator(h.pool)
+    err = generator.GenerateCompleteHistoricalData(ctx, days)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": fmt.Sprintf("Complete historical data generated for %d buildings over %d days", buildingCount, days),
+        "days": days,
+        "buildings": buildingCount,
+        "tables": []string{
+            "cold_water_meters", 
+            "hot_water_meters", 
+            "temperature_readings", 
+            "pump_data",
+            "itp",
+        },
+    })
+}
+
+// Вспомогательный метод для создания тестовых зданий
+func (h *Handler) createTestBuildings(ctx context.Context) error {
+    buildings := []struct {
+        id      uuid.UUID
+        address string
+        fiasID  string
+        unomID  string
+    }{
+        {
+            id:      uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+            address: "г. Москва, ул. Ленина, д. 10",
+            fiasID:  "fias-001",
+            unomID:  "unom-1001",
+        },
+        {
+            id:      uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+            address: "г. Москва, пр. Мира, д. 25",
+            fiasID:  "fias-002", 
+            unomID:  "unom-1002",
+        },
+        {
+            id:      uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+            address: "г. Москва, ул. Гагарина, д. 15",
+            fiasID:  "fias-003",
+            unomID:  "unom-1003",
+        },
+    }
+
+    for _, b := range buildings {
+        _, err := h.pool.Exec(ctx, `
+            INSERT INTO buildings (id, address, fias_id, unom_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+            b.id, b.address, b.fiasID, b.unomID)
+        if err != nil {
+            return fmt.Errorf("insert building %s: %w", b.address, err)
+        }
+        
+        // Создаем ИТП для каждого здания
+        itpID := uuid.New()
+        _, err = h.pool.Exec(ctx, `
+            INSERT INTO itp (id, itp_number, building_id, created_at, updated_at)
+            VALUES ($1, $2, $3, NOW(), NOW())`,
+            itpID, fmt.Sprintf("ИТП-%s", b.unomID), b.id)
+        if err != nil {
+            fmt.Printf("Warning: failed to create ITP for building %s: %v\n", b.address, err)
+        }
+    }
+
+    fmt.Printf("Created %d test buildings\n", len(buildings))
+    return nil
+}
+// handlers.go - ДОБАВЬТЕ этот метод
+
+// Создание тестовых зданий
+func (h *Handler) CreateTestBuildings(c *gin.Context) {
+    ctx := context.Background()
+    
+    // Проверяем, есть ли уже здания
+    var count int
+    err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM buildings").Scan(&count)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error: " + err.Error()})
+        return
+    }
+    
+    if count > 0 {
+        c.JSON(http.StatusOK, gin.H{"message": "Buildings already exist", "count": count})
+        return
+    }
+    
+    // Создаем тестовые здания
+    buildings := []struct {
+        id      uuid.UUID
+        address string
+        fiasID  string
+        unomID  string
+    }{
+        {
+            id:      uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+            address: "г. Москва, ул. Ленина, д. 10",
+            fiasID:  "fias-001",
+            unomID:  "unom-1001",
+        },
+        {
+            id:      uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+            address: "г. Москва, пр. Мира, д. 25",
+            fiasID:  "fias-002", 
+            unomID:  "unom-1002",
+        },
+        {
+            id:      uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+            address: "г. Москва, ул. Гагарина, д. 15",
+            fiasID:  "fias-003",
+            unomID:  "unom-1003",
+        },
+    }
+
+    for _, b := range buildings {
+        _, err := h.pool.Exec(ctx, `
+            INSERT INTO buildings (id, address, fias_id, unom_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+            b.id, b.address, b.fiasID, b.unomID)
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create building: " + err.Error()})
+            return
+        }
+        
+        // Создаем ИТП для каждого здания
+        itpID := uuid.New()
+        _, err = h.pool.Exec(ctx, `
+            INSERT INTO itp (id, itp_number, building_id, created_at, updated_at)
+            VALUES ($1, $2, $3, NOW(), NOW())`,
+            itpID, fmt.Sprintf("ИТП-%s", b.unomID), b.id)
+        if err != nil {
+            fmt.Printf("Warning: failed to create ITP for building %s: %v\n", b.address, err)
+        }
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Test buildings created successfully",
+        "count": len(buildings),
+    })
+}

@@ -160,27 +160,21 @@ class WaterMonitoringApp {
 
     renderBuildings(buildings) {
         const container = document.getElementById('buildingsList');
-        if (!container) return;
-        
         if (!buildings || buildings.length === 0) {
-            container.innerHTML = '<div class="loading">Нет данных о зданиях</div>';
+            container.innerHTML = '<div class="loading">Объекты не найдены</div>';
             return;
         }
 
-        console.log(`🎨 Отрисовка ${buildings.length} зданий`);
-        
         container.innerHTML = buildings.map(building => `
-            <div class="building-card" onclick="app.showBuildingDetails('${building.id}')">
-                <h3>${this.escapeHtml(building.address)}</h3>
-                <div class="address">
-                    ${building.fias_id ? `ФИАС: ${this.escapeHtml(building.fias_id)}` : ''}
-                    ${building.unom_id ? ` | УНОМ: ${this.escapeHtml(building.unom_id)}` : ''}
+            <div class="building-row" onclick="app.showBuildingDetails('${building.id}')">
+                <div class="building-address">${this.escapeHtml(building.address)}</div>
+                <div class="building-id">
+                    ФИАС: ${building.fias_id || 'не указан'} | УНОМ: ${building.unom_id || 'не указан'}
                 </div>
-                <div class="building-meta">
-                    <span>Добавлено: ${new Date(building.created_at).toLocaleDateString('ru-RU')}</span>
-                </div>
+                <div>Активен</div>
+                <div class="building-date">${new Date(building.created_at).toLocaleDateString('ru-RU')}</div>
             </div>
-        `).join('');
+            `).join('');
     }
 
     populateBuildingSelect(buildings) {
@@ -266,6 +260,14 @@ class WaterMonitoringApp {
         console.log("📊 Отображение результатов анализа:", analysis);
         const container = document.getElementById('analysisResults');
         if (!container) return;
+        // Показываем откуда взяты данные
+        if (analysis.data_source === 'estimated') {
+            container.innerHTML = `
+                <div class="warning-banner">
+                    ⚠️ Внимание: используются расчетные данные. Реальные данные отсутствуют в системе.
+                </div>
+                ` + container.innerHTML;
+        }
         
         // Статусы с иконками
         const statusIcons = {
