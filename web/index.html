@@ -64,6 +64,21 @@
 
         <!-- Секция реального времени -->
         <section id="realtime" class="section">
+            <!-- В секции realtime добавьте этот блок -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div>
+                    <strong>Статус соединения:</strong> 
+                    <span id="connectionStatus" style="margin-left: 10px;">🔴 Проверка...</span>
+                </div>
+                <div>
+                    <button id="startGeneratorBtn" class="btn-primary" style="background: #27ae60;">Запустить генератор</button>
+                    <button id="stopGeneratorBtn" class="btn-primary" style="background: #e74c3c; margin-left: 10px;">Остановить генератор</button>
+                </div>
+            </div>
+            <div id="temperatureData"></div>
+            <div style="text-align: center; margin-top: 10px; font-size: 12px; color: #666;">
+                Последнее обновление: <span id="realtimeTimestamp">--:--:--</span>
+            </div>
             <div class="container">
                 <h2>Мониторинг в реальном времени</h2>
                 <div class="realtime-grid">

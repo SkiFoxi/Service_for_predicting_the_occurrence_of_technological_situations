@@ -10,163 +10,321 @@ import (
     "github.com/google/uuid"
 )
 
-// Простой генератор данных для демонстрации
+// Расширенный генератор данных для реального времени
 type DataGenerator struct {
-    pool *pgxpool.Pool
+    pool      *pgxpool.Pool
+    isRunning bool
+    ctx       context.Context
+    cancel    context.CancelFunc
 }
 
 func NewDataGenerator(pool *pgxpool.Pool) *DataGenerator {
     return &DataGenerator{pool: pool}
 }
 
-func (dg *DataGenerator) Start(ctx context.Context) {
-    go dg.generateData(ctx)
-    fmt.Println("Data generation started")
+// Запуск непрерывной генерации данных
+func (dg *DataGenerator) StartContinuousGeneration(ctx context.Context) {
+    if dg.isRunning {
+        fmt.Println("Generator is already running")
+        return
+    }
+
+    dg.ctx, dg.cancel = context.WithCancel(ctx)
+    dg.isRunning = true
+
+    fmt.Println("🚀 Starting continuous data generation...")
+
+    // Запускаем различные тикеры для разных типов данных
+    go dg.startWaterDataGeneration()
+    go dg.startTemperatureDataGeneration()
+    go dg.startPumpDataGeneration()
+    go dg.startRealtimeUpdates()
+
+    fmt.Println("✅ Continuous data generation started")
 }
 
-func (dg *DataGenerator) generateData(ctx context.Context) {
-    ticker := time.NewTicker(30 * time.Second) // Каждые 30 секунд
+// Остановка генерации
+func (dg *DataGenerator) Stop() {
+    if dg.isRunning && dg.cancel != nil {
+        dg.cancel()
+        dg.isRunning = false
+        fmt.Println("🛑 Data generation stopped")
+    }
+}
+
+// Получение статуса генератора
+func (dg *DataGenerator) IsRunning() bool {
+    return dg.isRunning
+}
+
+
+// Генерация водных данных (каждые 30 секунд)
+func (dg *DataGenerator) startWaterDataGeneration() {
+    ticker := time.NewTicker(30 * time.Second)
     defer ticker.Stop()
 
     for {
         select {
-        case <-ctx.Done():
+        case <-dg.ctx.Done():
             return
         case <-ticker.C:
-            dg.insertDemoData(ctx)
+            dg.generateWaterData()
         }
     }
 }
 
-func (dg *DataGenerator) insertDemoData(ctx context.Context) {
-    // Получаем список зданий
-    rows, err := dg.pool.Query(ctx, "SELECT id FROM buildings")
+// Генерация температурных данных (каждые 2 минуты)
+func (dg *DataGenerator) startTemperatureDataGeneration() {
+    ticker := time.NewTicker(2 * time.Minute)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-dg.ctx.Done():
+            return
+        case <-ticker.C:
+            dg.generateTemperatureDataForAllBuildings()
+        }
+    }
+}
+
+// Генерация данных насосов (каждые 5 минут)
+func (dg *DataGenerator) startPumpDataGeneration() {
+    ticker := time.NewTicker(5 * time.Minute)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-dg.ctx.Done():
+            return
+        case <-ticker.C:
+            dg.generatePumpDataForAllBuildings()
+        }
+    }
+}
+
+// Уведомления о новых данных (для веб-сокетов)
+func (dg *DataGenerator) startRealtimeUpdates() {
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-dg.ctx.Done():
+            return
+        case <-ticker.C:
+            dg.broadcastDataUpdate()
+        }
+    }
+}
+
+// Генерация водных данных для всех зданий
+func (dg *DataGenerator) generateWaterData() {
+    buildings, err := dg.getBuildings()
     if err != nil {
         fmt.Printf("Error getting buildings: %v\n", err)
         return
     }
-    defer rows.Close()
 
-    var buildingIDs []uuid.UUID
-    for rows.Next() {
-        var id uuid.UUID
-        if err := rows.Scan(&id); err != nil {
-            continue
+    currentTime := time.Now()
+    
+    for _, building := range buildings {
+        // Реалистичные данные с небольшими случайными колебаниями
+        baseHotWater1 := 2.5 + rand.Float64()*2.0  // 2.5-4.5 м³/ч
+        baseHotWater2 := 1.5 + rand.Float64()*1.5  // 1.5-3.0 м³/ч
+        baseColdWater := baseHotWater1 + baseHotWater2 + 1.0 + rand.Float64()*2.0 // ХВС > ГВС
+
+        // Добавляем суточные колебания (утром/вечером больше потребление)
+        hour := currentTime.Hour()
+        var dailyMultiplier float64
+        switch {
+        case hour >= 7 && hour <= 10: // Утро
+            dailyMultiplier = 1.3
+        case hour >= 18 && hour <= 22: // Вечер
+            dailyMultiplier = 1.4
+        case hour >= 23 || hour <= 6: // Ночь
+            dailyMultiplier = 0.7
+        default: // День
+            dailyMultiplier = 1.1
         }
-        buildingIDs = append(buildingIDs, id)
-    }
 
-    if len(buildingIDs) == 0 {
-        fmt.Println("No buildings found for data generation")
-        return
-    }
+        hotWater1 := int(baseHotWater1 * dailyMultiplier)
+        hotWater2 := int(baseHotWater2 * dailyMultiplier)
+        coldWater := int(baseColdWater * dailyMultiplier)
 
-    // Вставляем демо-данные для каждого здания
-    for _, buildingID := range buildingIDs {
-        // РЕАЛИСТИЧНЫЕ данные для МКД:
-        
-        // Данные ГВС - реалистичные значения
-        hotWaterFlow1 := 2 + rand.Intn(4)  // 2-5 м³/ч - канал 1
-        hotWaterFlow2 := 1 + rand.Intn(3)  // 1-3 м³/ч - канал 2
-
-        _, err := dg.pool.Exec(ctx, `
+        // Данные ГВС
+        _, err := dg.pool.Exec(dg.ctx, `
             INSERT INTO hot_water_meters (id, building_id, flow_rate_ch1, flow_rate_ch2, timestamp, created_at)
             VALUES ($1, $2, $3, $4, $5, NOW())`,
-            uuid.New(), buildingID, hotWaterFlow1, hotWaterFlow2, time.Now())
+            uuid.New(), building.ID, hotWater1, hotWater2, currentTime)
         
         if err != nil {
             fmt.Printf("Error inserting hot water data: %v\n", err)
+            continue
         }
 
-        // Данные ХВС - реалистичные значения (должны быть больше ГВС)
-        // Сначала получим ITP для этого здания
-        var itpID uuid.UUID
-        err = dg.pool.QueryRow(ctx, "SELECT id FROM itp WHERE building_id = $1 LIMIT 1", buildingID).Scan(&itpID)
+        // Данные ХВС
+        itpID, err := dg.getITPForBuilding(building.ID)
         if err == nil {
-            coldWaterFlow := 3 + rand.Intn(7) // 3-9 м³/ч - ХВС должно быть больше ГВС
-            
-            _, err = dg.pool.Exec(ctx, `
+            _, err = dg.pool.Exec(dg.ctx, `
                 INSERT INTO cold_water_meters (id, itp_id, flow_rate, timestamp, created_at)
                 VALUES ($1, $2, $3, $4, NOW())`,
-                uuid.New(), itpID, coldWaterFlow, time.Now())
+                uuid.New(), itpID, coldWater, currentTime)
             
             if err != nil {
                 fmt.Printf("Error inserting cold water data: %v\n", err)
             }
         }
-
-        // Температурные данные (генерируем реже - раз в 10 минут)
-        if time.Now().Minute()%10 == 0 {
-            if err := dg.generateTemperatureData(ctx, buildingID); err != nil {
-                fmt.Printf("Error generating temperature data: %v\n", err)
-            }
-        }
-
-        // Данные насосов (генерируем реже - раз в 30 минут)
-        if time.Now().Minute()%30 == 0 {
-            if err := dg.generatePumpData(ctx, buildingID); err != nil {
-                fmt.Printf("Error generating pump data: %v\n", err)
-            }
-        }
     }
 
-    fmt.Printf("Demo data inserted for %d buildings at %s\n", len(buildingIDs), time.Now().Format("15:04:05"))
+    fmt.Printf("💧 Water data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
 }
 
-// Генерация температурных данных
-func (dg *DataGenerator) generateTemperatureData(ctx context.Context, buildingID uuid.UUID) error {
-    // Реалистичные температурные данные для ГВС
-    supplyTemp := 60 + rand.Intn(10)    // 60-70°C - подача
-    returnTemp := 40 + rand.Intn(10)    // 40-50°C - возврат
-    deltaTemp := supplyTemp - returnTemp // разница 15-25°C
-    
-    _, err := dg.pool.Exec(ctx, `
-        INSERT INTO temperature_readings (id, building_id, supply_temp, return_temp, delta_temp, timestamp, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        uuid.New(), buildingID, supplyTemp, returnTemp, deltaTemp, time.Now())
-    
+// Генерация температурных данных для всех зданий
+func (dg *DataGenerator) generateTemperatureDataForAllBuildings() {
+    buildings, err := dg.getBuildings()
     if err != nil {
-        return fmt.Errorf("insert temperature data: %w", err)
+        fmt.Printf("Error getting buildings: %v\n", err)
+        return
     }
-    return nil
-}
 
-// Генерация данных насосов
-func (dg *DataGenerator) generatePumpData(ctx context.Context, buildingID uuid.UUID) error {
-    // Генерируем данные для 2-4 насосов
-    numPumps := 2 + rand.Intn(3)
+    currentTime := time.Now()
     
-    for i := 1; i <= numPumps; i++ {
-        pumpNumber := fmt.Sprintf("Pump-%d", i)
-        status := "normal"
-        operatingHours := 1000 + rand.Intn(8000)
+    for _, building := range buildings {
+        // Реалистичные температурные данные с сезонными колебаниями
+        month := currentTime.Month()
+        var seasonalAdjustment int
         
-        // Случайно меняем статус для демонстрации
-        if rand.Float32() < 0.1 { // 10% chance for warning
-            status = "warning"
-        } else if rand.Float32() < 0.05 { // 5% chance for critical
-            status = "critical"
+        switch month {
+        case time.December, time.January, time.February: // Зима
+            seasonalAdjustment = 5
+        case time.June, time.July, time.August: // Лето
+            seasonalAdjustment = -3
+        default: // Весна/осень
+            seasonalAdjustment = 0
         }
-        
-        pressureInput := 2 + rand.Intn(2)    // 2-4 бар
-        pressureOutput := pressureInput + 1 + rand.Intn(2) // +1-3 бар
-        vibrationLevel := rand.Intn(10)      // 0-9
-        
-        _, err := dg.pool.Exec(ctx, `
-            INSERT INTO pump_data (id, building_id, pump_number, status, operating_hours, 
-                                 pressure_input, pressure_output, vibration_level, timestamp, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-            uuid.New(), buildingID, pumpNumber, status, operatingHours, 
-            pressureInput, pressureOutput, vibrationLevel, time.Now())
+
+        supplyTemp := 65 + seasonalAdjustment + rand.Intn(5)    // 65-70°C ± сезонная корректировка
+        returnTemp := 42 + seasonalAdjustment/2 + rand.Intn(4)  // 42-46°C
+        deltaTemp := supplyTemp - returnTemp
+
+        _, err := dg.pool.Exec(dg.ctx, `
+            INSERT INTO temperature_readings (id, building_id, supply_temp, return_temp, delta_temp, timestamp, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+            uuid.New(), building.ID, supplyTemp, returnTemp, deltaTemp, currentTime)
         
         if err != nil {
-            return fmt.Errorf("insert pump data: %w", err)
+            fmt.Printf("Error inserting temperature data: %v\n", err)
         }
     }
-    return nil
+
+    fmt.Printf("🌡️ Temperature data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
 }
 
-// Новый метод для заполнения историческими данными всех таблиц
+// Генерация данных насосов для всех зданий
+func (dg *DataGenerator) generatePumpDataForAllBuildings() {
+    buildings, err := dg.getBuildings()
+    if err != nil {
+        fmt.Printf("Error getting buildings: %v\n", err)
+        return
+    }
+
+    currentTime := time.Now()
+    
+    for _, building := range buildings {
+        // Генерируем данные для 2-3 насосов на здание
+        numPumps := 2 + rand.Intn(2)
+        
+        for i := 1; i <= numPumps; i++ {
+            pumpNumber := fmt.Sprintf("Pump-%d", i)
+            
+            // Наработка увеличивается с каждым обновлением
+            baseHours := 5000 + rand.Intn(3000)
+            additionalHours := int(time.Since(building.CreatedAt).Hours()) / 24
+            operatingHours := baseHours + additionalHours
+
+            // Статус зависит от наработки
+            status := "normal"
+            if operatingHours > 10000 && rand.Float32() < 0.4 {
+                status = "warning"
+            } else if operatingHours > 15000 && rand.Float32() < 0.3 {
+                status = "critical"
+            }
+
+            pressureInput := 2 + rand.Intn(2)
+            pressureOutput := pressureInput + 1 + rand.Intn(2)
+            vibrationLevel := rand.Intn(8) // 0-7
+
+            _, err := dg.pool.Exec(dg.ctx, `
+                INSERT INTO pump_data (id, building_id, pump_number, status, operating_hours, 
+                                     pressure_input, pressure_output, vibration_level, timestamp, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+                uuid.New(), building.ID, pumpNumber, status, operatingHours, 
+                pressureInput, pressureOutput, vibrationLevel, currentTime)
+            
+            if err != nil {
+                fmt.Printf("Error inserting pump data: %v\n", err)
+            }
+        }
+    }
+
+    fmt.Printf("⚙️ Pump data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
+}
+
+// Уведомление о новых данных (заглушка для веб-сокетов)
+func (dg *DataGenerator) broadcastDataUpdate() {
+    // Здесь будет логика для веб-сокетов
+    // Пока просто логируем
+    fmt.Printf("📡 Data update broadcast at %s\n", time.Now().Format("15:04:05"))
+}
+
+// Вспомогательные методы
+func (dg *DataGenerator) getBuildings() ([]Building, error) {
+    rows, err := dg.pool.Query(dg.ctx, "SELECT id, address, created_at FROM buildings")
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var buildings []Building
+    for rows.Next() {
+        var b Building
+        err := rows.Scan(&b.ID, &b.Address, &b.CreatedAt)
+        if err != nil {
+            continue
+        }
+        buildings = append(buildings, b)
+    }
+
+    return buildings, nil
+}
+
+func (dg *DataGenerator) getITPForBuilding(buildingID uuid.UUID) (uuid.UUID, error) {
+    var itpID uuid.UUID
+    err := dg.pool.QueryRow(dg.ctx, 
+        "SELECT id FROM itp WHERE building_id = $1 LIMIT 1", buildingID).Scan(&itpID)
+    return itpID, err
+}
+
+// Структура для зданий
+type Building struct {
+    ID        uuid.UUID
+    Address   string
+    CreatedAt time.Time
+}
+
+// Старые методы для обратной совместимости
+func (dg *DataGenerator) Start(ctx context.Context) {
+    dg.StartContinuousGeneration(ctx)
+}
+
+func (dg *DataGenerator) insertDemoData(ctx context.Context) {
+    dg.generateWaterData()
+}
+
+// generator.go - добавьте эти методы в конец файла
+
+// Генерация полных исторических данных
 func (dg *DataGenerator) GenerateCompleteHistoricalData(ctx context.Context, days int) error {
     // Получаем список зданий
     rows, err := dg.pool.Query(ctx, "SELECT id FROM buildings")
@@ -229,7 +387,7 @@ func (dg *DataGenerator) GenerateCompleteHistoricalData(ctx context.Context, day
                     uuid.New(), buildingID, hotWaterFlow1, hotWaterFlow2, currentTime)
                 
                 if err != nil {
-                    fmt.Printf("Error inserting historical hot water data: %v\n", err)
+                    fmt.Printf("Error inserting hot water data: %v\n", err)
                 }
 
                 // Данные ХВС
@@ -239,54 +397,48 @@ func (dg *DataGenerator) GenerateCompleteHistoricalData(ctx context.Context, day
                     uuid.New(), itpID, coldWaterFlow, currentTime)
                 
                 if err != nil {
-                    fmt.Printf("Error inserting historical cold water data: %v\n", err)
+                    fmt.Printf("Error inserting cold water data: %v\n", err)
                 }
+            }
 
-                // Температурные данные (раз в 4 часа)
-                if hour%4 == 0 {
-                    supplyTemp := 60 + rand.Intn(10)
-                    returnTemp := 40 + rand.Intn(10)
-                    deltaTemp := supplyTemp - returnTemp
-                    
-                    _, err = dg.pool.Exec(ctx, `
-                        INSERT INTO temperature_readings (id, building_id, supply_temp, return_temp, delta_temp, timestamp, created_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-                        uuid.New(), buildingID, supplyTemp, returnTemp, deltaTemp, currentTime)
-                    
-                    if err != nil {
-                        fmt.Printf("Error inserting temperature data: %v\n", err)
-                    }
+            // Температурные данные (раз в день)
+            supplyTemp := 65 + rand.Intn(5)
+            returnTemp := 42 + rand.Intn(4)
+            deltaTemp := supplyTemp - returnTemp
+            
+            _, err = dg.pool.Exec(ctx, `
+                INSERT INTO temperature_readings (id, building_id, supply_temp, return_temp, delta_temp, timestamp, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+                uuid.New(), buildingID, supplyTemp, returnTemp, deltaTemp, currentDay)
+            
+            if err != nil {
+                fmt.Printf("Error inserting temperature data: %v\n", err)
+            }
+
+            // Данные насосов (раз в день)
+            numPumps := 2 + rand.Intn(2)
+            for p := 1; p <= numPumps; p++ {
+                pumpNumber := fmt.Sprintf("Pump-%d", p)
+                status := "normal"
+                operatingHours := 1000 + rand.Intn(8000) + (i * 24)
+                
+                if operatingHours > 8000 && rand.Float32() < 0.3 {
+                    status = "warning"
                 }
-
-                // Данные насосов (раз в день)
-                if hour == 12 { // В полдень каждого дня
-                    numPumps := 2 + rand.Intn(3)
-                    for p := 1; p <= numPumps; p++ {
-                        pumpNumber := fmt.Sprintf("Pump-%d", p)
-                        status := "normal"
-                        operatingHours := 1000 + rand.Intn(8000) + (i * 24) // увеличиваем наработку с каждым днем
-                        
-                        if operatingHours > 8000 && rand.Float32() < 0.3 {
-                            status = "warning"
-                        } else if operatingHours > 12000 && rand.Float32() < 0.2 {
-                            status = "critical"
-                        }
-                        
-                        pressureInput := 2 + rand.Intn(2)
-                        pressureOutput := pressureInput + 1 + rand.Intn(2)
-                        vibrationLevel := rand.Intn(10)
-                        
-                        _, err = dg.pool.Exec(ctx, `
-                            INSERT INTO pump_data (id, building_id, pump_number, status, operating_hours, 
-                                                 pressure_input, pressure_output, vibration_level, timestamp, created_at)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-                            uuid.New(), buildingID, pumpNumber, status, operatingHours, 
-                            pressureInput, pressureOutput, vibrationLevel, currentTime)
-                        
-                        if err != nil {
-                            fmt.Printf("Error inserting pump data: %v\n", err)
-                        }
-                    }
+                
+                pressureInput := 2 + rand.Intn(2)
+                pressureOutput := pressureInput + 1 + rand.Intn(2)
+                vibrationLevel := rand.Intn(10)
+                
+                _, err = dg.pool.Exec(ctx, `
+                    INSERT INTO pump_data (id, building_id, pump_number, status, operating_hours, 
+                                         pressure_input, pressure_output, vibration_level, timestamp, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+                    uuid.New(), buildingID, pumpNumber, status, operatingHours, 
+                    pressureInput, pressureOutput, vibrationLevel, currentDay)
+                
+                if err != nil {
+                    fmt.Printf("Error inserting pump data: %v\n", err)
                 }
             }
         }
@@ -296,8 +448,7 @@ func (dg *DataGenerator) GenerateCompleteHistoricalData(ctx context.Context, day
     return nil
 }
 
-// Старый метод для обратной совместимости (можно удалить если не используется)
+// Старый метод для обратной совместимости
 func (dg *DataGenerator) GenerateHistoricalData(ctx context.Context, days int) error {
-    // Просто вызываем новый метод
     return dg.GenerateCompleteHistoricalData(ctx, days)
 }

@@ -1,4 +1,4 @@
-// web/js/main.js - ПОЛНЫЙ КОД С РЕАЛЬНЫМ ВРЕМЕНЕМ
+// web/js/main.js - ПОЛНЫЙ КОД С WebSocket И РЕАЛЬНЫМ ВРЕМЕНЕМ
 
 class WaterMonitoringAPI {
     constructor(baseUrl = 'http://localhost:8080/api') {
@@ -60,23 +60,202 @@ class WaterMonitoringAPI {
     async seedTestData() {
         return this.request('/seed-data', { method: 'POST' });
     }
+
+    async createTestBuildings() {
+        return this.request('/create-test-buildings', { method: 'POST' });
+    }
+
+    async generateCompleteHistory(days = 7) {
+        return this.request(`/generate-complete-history?days=${days}`, { method: 'POST' });
+    }
+}
+
+class RealtimeManager {
+    constructor() {
+        this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 3000;
+        this.messageHandlers = new Map();
+        this.isConnected = false;
+    }
+
+    connect() {
+        try {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            this.ws = new WebSocket(wsUrl);
+            
+            this.ws.onopen = () => {
+                console.log('🔗 WebSocket connected');
+                this.reconnectAttempts = 0;
+                this.isConnected = true;
+                
+                // Запрашиваем подписку на обновления
+                this.ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    channels: ['realtime_updates']
+                }));
+
+                // Оповещаем обработчики о подключении
+                this.notifyHandlers('connected', {});
+            };
+
+            this.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('📨 WebSocket message:', data.type);
+                    this.handleMessage(data);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            this.ws.onclose = (event) => {
+                console.log('🔌 WebSocket disconnected:', event.code, event.reason);
+                this.isConnected = false;
+                this.notifyHandlers('disconnected', { code: event.code, reason: event.reason });
+                this.handleReconnect();
+            };
+
+            this.ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                this.isConnected = false;
+                this.notifyHandlers('error', { error });
+            };
+
+        } catch (error) {
+            console.error('WebSocket connection failed:', error);
+            this.handleReconnect();
+        }
+    }
+
+    handleMessage(data) {
+        this.notifyHandlers(data.type, data);
+    }
+
+    notifyHandlers(type, data) {
+        if (this.messageHandlers.has(type)) {
+            this.messageHandlers.get(type).forEach(handler => {
+                try {
+                    handler(data);
+                } catch (error) {
+                    console.error('Error in message handler:', error);
+                }
+            });
+        }
+    }
+
+    on(messageType, handler) {
+        if (!this.messageHandlers.has(messageType)) {
+            this.messageHandlers.set(messageType, []);
+        }
+        this.messageHandlers.get(messageType).push(handler);
+    }
+
+    off(messageType, handler) {
+        if (this.messageHandlers.has(messageType)) {
+            const handlers = this.messageHandlers.get(messageType);
+            const index = handlers.indexOf(handler);
+            if (index > -1) {
+                handlers.splice(index, 1);
+            }
+        }
+    }
+
+    send(message) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify(message));
+        } else {
+            console.warn('WebSocket not connected, message not sent:', message);
+        }
+    }
+
+    handleReconnect() {
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.reconnectAttempts++;
+            const delay = this.reconnectDelay * this.reconnectAttempts;
+            console.log(`🔄 Attempting to reconnect in ${delay}ms... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+            
+            setTimeout(() => {
+                this.connect();
+            }, delay);
+        } else {
+            console.error('❌ Max reconnection attempts reached');
+            this.notifyHandlers('reconnect_failed', {});
+        }
+    }
+
+    disconnect() {
+        if (this.ws) {
+            this.ws.close(1000, 'Manual disconnect');
+            this.ws = null;
+        }
+        this.isConnected = false;
+    }
+
+    getConnectionStatus() {
+        return this.isConnected;
+    }
 }
 
 class WaterMonitoringApp {
     constructor() {
         this.api = new WaterMonitoringAPI();
+        this.realtimeManager = new RealtimeManager();
         this.buildings = [];
         this.currentBuilding = null;
-        this.realtimeInterval = null;
         this.realtimeChart = null;
+        this.lastUpdateId = null;
+        this.isRealtimeActive = false;
         this.init();
     }
 
     async init() {
         console.log("🚀 Инициализация приложения...");
         this.setupEventListeners();
+        this.setupRealtimeHandlers();
         await this.loadBuildings();
+        
+        // Подключаемся к WebSocket
+        this.realtimeManager.connect();
+        
         console.log("✅ Приложение готово");
+    }
+
+    setupRealtimeHandlers() {
+        // Обработчик подключения WebSocket
+        this.realtimeManager.on('connected', (data) => {
+            this.showNotification('🔗 Подключено к серверу в реальном времени', 'success');
+            this.updateConnectionStatus(true);
+        });
+
+        // Обработчик отключения WebSocket
+        this.realtimeManager.on('disconnected', (data) => {
+            this.showNotification('🔌 Отключено от сервера', 'warning');
+            this.updateConnectionStatus(false);
+        });
+
+        // Обработчик обновлений реального времени
+        this.realtimeManager.on('realtime_update', (data) => {
+            if (this.isRealtimeActive && data.building_id === this.currentBuilding) {
+                this.handleRealtimeUpdate(data);
+            }
+        });
+
+        // Обработчик ошибок
+        this.realtimeManager.on('error', (data) => {
+            console.error('WebSocket error:', data.error);
+            this.showNotification('❌ Ошибка соединения', 'error');
+        });
+
+        // Пинг-понг для поддержания соединения
+        setInterval(() => {
+            if (this.realtimeManager.getConnectionStatus()) {
+                this.realtimeManager.send({ type: 'ping' });
+            }
+        }, 30000); // Каждые 30 секунд
     }
 
     setupEventListeners() {
@@ -106,6 +285,21 @@ class WaterMonitoringApp {
             analyzeBtn.addEventListener('click', () => {
                 console.log("📊 Кнопка анализа нажата");
                 this.analyzeSelectedBuilding();
+            });
+        }
+
+        // Генератор данных
+        const startGeneratorBtn = document.getElementById('startGeneratorBtn');
+        if (startGeneratorBtn) {
+            startGeneratorBtn.addEventListener('click', () => {
+                this.startDataGenerator();
+            });
+        }
+
+        const stopGeneratorBtn = document.getElementById('stopGeneratorBtn');
+        if (stopGeneratorBtn) {
+            stopGeneratorBtn.addEventListener('click', () => {
+                this.stopDataGenerator();
             });
         }
 
@@ -217,7 +411,8 @@ class WaterMonitoringApp {
             </div>
             <div class="actions" style="margin-top: 20px;">
                 <button class="btn-primary" onclick="app.analyzeBuilding('${building.id}')">Анализировать потребление</button>
-                <button class="btn-primary" onclick="app.setRealtimeBuilding('${building.id}')" style="margin-left: 10px;">Мониторить в реальном времени</button>
+                <button class="btn-primary" onclick="app.setRealtimeBuilding('${building.id}')" style="margin-left: 10px;">Мониторинг в реальном времени</button>
+                <button class="btn-primary" onclick="app.generateBuildingData('${building.id}')" style="margin-left: 10px; background: #27ae60;">Сгенерировать данные</button>
             </div>
         `;
 
@@ -256,47 +451,112 @@ class WaterMonitoringApp {
         await this.analyzeBuilding(buildingId, days);
     }
 
-    // main.js - полный метод showAnalysisResults
+    showAnalysisResults(analysis) {
+        console.log("📊 Отображение результатов анализа:", analysis);
+        const container = document.getElementById('analysisResults');
+        if (!container) return;
 
-showAnalysisResults(analysis) {
-    console.log("📊 Отображение результатов анализа:", analysis);
-    const container = document.getElementById('analysisResults');
-    if (!container) return;
+        let htmlContent = '';
+        if (analysis.data_source === 'estimated') {
+            htmlContent = `
+                <div class="warning-banner" style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin-bottom: 20px; color: #856404;">
+                    ⚠️ Внимание: используются расчетные данные. Реальные данные отсутствуют в системе.
+                </div>
+            `;
+        }
+        
+        // Статусы с иконками
+        const statusIcons = {
+            normal: '✅',
+            leak: '🚨', 
+            error: '⚠️',
+            warning: '🔶',
+            critical: '🔥',
+            unknown: '❓'
+        };
+        
+        const pumpIcons = {
+            normal: '✅',
+            warning: '🔶',
+            critical: '🚨',
+            maintenance_soon: '⚙️',
+            maintenance_required: '🛠️',
+            unknown: '❓'
+        };
 
-    // Показываем откуда взяты данные
-    let htmlContent = '';
-    if (analysis.data_source === 'estimated') {
-        htmlContent = `
-            <div class="warning-banner" style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
-                ⚠️ Внимание: используются расчетные данные. Реальные данные отсутствуют в системе.
+        htmlContent += `
+            <div class="analysis-header">
+                <h3>Анализ за период: ${analysis.period || '30 дней'}</h3>
+                <div class="status ${analysis.has_anomalies ? 'has-anomalies' : 'normal'}">
+                    ${analysis.has_anomalies ? '⚠️ Обнаружены аномалии' : '✅ Норма'}
+                </div>
+            </div>
+            
+            <div class="metrics-grid">
+                <div class="metric">
+                    <span>ХВС всего:</span>
+                    <strong>${analysis.total_cold_water || 0} м³</strong>
+                </div>
+                <div class="metric">
+                    <span>ГВС всего:</span>
+                    <strong>${analysis.total_hot_water || 0} м³</strong>
+                </div>
+                <div class="metric">
+                    <span>Разница:</span>
+                    <strong class="${analysis.difference > 0 ? 'positive' : 'negative'}">
+                        ${analysis.difference || 0} м³ (${analysis.difference_percent ? analysis.difference_percent.toFixed(1) : 0}%)
+                    </strong>
+                </div>
+                <div class="metric">
+                    <span>Соотношение ГВС/ХВС:</span>
+                    <strong>${analysis.hot_to_cold_ratio ? analysis.hot_to_cold_ratio.toFixed(1) + '%' : 'N/A'}</strong>
+                </div>
+            </div>
+
+            <!-- ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ -->
+            <div class="intelligent-analysis">
+                <h4>🧠 Интеллектуальный анализ</h4>
+                
+                <div class="analysis-item">
+                    <strong>Баланс воды:</strong>
+                    <span class="status-${analysis.water_balance_status}">
+                        ${statusIcons[analysis.water_balance_status] || '❓'} 
+                        ${this.getWaterBalanceText(analysis.water_balance_status, analysis)}
+                    </span>
+                </div>
+                
+                <div class="analysis-item">
+                    <strong>Температурный режим:</strong>
+                    <span class="status-${analysis.temperature_status}">
+                        ${statusIcons[analysis.temperature_status] || '❓'}
+                        ${this.getTemperatureText(analysis.temperature_status, analysis)}
+                    </span>
+                </div>
+                
+                <div class="analysis-item">
+                    <strong>Состояние насосов:</strong>
+                    <span class="status-${analysis.pump_status}">
+                        ${pumpIcons[analysis.pump_status] || '❓'}
+                        ${this.getPumpStatusText(analysis.pump_status, analysis)}
+                    </span>
+                </div>
+            </div>
+
+            <!-- РЕКОМЕНДАЦИИ -->
+            <div class="recommendations">
+                <h4>💡 Рекомендации системы</h4>
+                <div class="recommendations-list">
+                    ${this.renderRecommendations(analysis.recommendations || [])}
+                </div>
             </div>
         `;
-    }
-    
-    // Статусы с иконками
-    const statusIcons = {
-        normal: '✅',
-        leak: '🚨', 
-        error: '⚠️',
-        warning: '🔶',
-        critical: '🔥',
-        unknown: '❓'
-    };
-    
-    const pumpIcons = {
-        normal: '✅',
-        warning: '🔶',
-        critical: '🚨',
-        maintenance_soon: '⚙️',
-        maintenance_required: '🛠️',
-        unknown: '❓'
-    };
 
-    // Тексты для статусов баланса воды
-    const getWaterBalanceText = (status, analysis) => {
-        const ratio = analysis.difference_percent ? 
-            ` (ГВС/ХВС: ${(100 - analysis.difference_percent).toFixed(1)}%)` : '';
-            
+        container.innerHTML = htmlContent;
+    }
+
+    // Вспомогательные методы для текста статусов
+    getWaterBalanceText(status, analysis) {
+        const ratio = analysis.hot_to_cold_ratio ? ` (${analysis.hot_to_cold_ratio.toFixed(1)}%)` : '';
         const texts = {
             normal: `Норма${ratio}`,
             leak: `Возможная утечка${ratio}`,
@@ -305,13 +565,11 @@ showAnalysisResults(analysis) {
             unknown: 'Недостаточно данных'
         };
         return texts[status] || 'Неизвестный статус';
-    };
+    }
 
-    // Тексты для температурного режима
-    const getTemperatureText = (status, analysis) => {
+    getTemperatureText(status, analysis) {
         const tempInfo = analysis.temperature_data ? 
             ` (ΔT=${analysis.temperature_data.avg_delta_temp}°C)` : '';
-            
         const texts = {
             normal: `Норма${tempInfo}`,
             warning: `Отклонение${tempInfo}`,
@@ -319,165 +577,16 @@ showAnalysisResults(analysis) {
             unknown: 'Данные отсутствуют'
         };
         return texts[status] || 'Неизвестный статус';
-    };
+    }
 
-    // Тексты для насосов
-    const getPumpStatusText = (status, analysis) => {
+    getPumpStatusText(status, analysis) {
         const hoursInfo = analysis.pump_operating_hours ? 
             ` (${analysis.pump_operating_hours} ч)` : '';
-            
         const texts = {
             normal: `Норма${hoursInfo}`,
             warning: `Требует внимания${hoursInfo}`,
             critical: `Срочное обслуживание${hoursInfo}`,
-            maintenance_soon: `ТО в ближайшее время${hoursInfo}`,
-            maintenance_required: `СРОЧНОЕ ТЕХОБСЛУЖИВАНИЕ${hoursInfo}`,
             unknown: 'Данные отсутствуют'
-        };
-        return texts[status] || 'Неизвестный статус';
-    };
-
-    htmlContent += `
-        <div class="analysis-header">
-            <h3>Анализ за период: ${analysis.period || '30 дней'}</h3>
-            <div class="status ${analysis.has_anomalies ? 'has-anomalies' : 'normal'}">
-                ${analysis.has_anomalies ? '⚠️ Обнаружены аномалии' : '✅ Норма'}
-            </div>
-        </div>
-        
-        <div class="metrics-grid">
-            <div class="metric">
-                <span>ХВС всего:</span>
-                <strong>${analysis.total_cold_water || 0} м³</strong>
-            </div>
-            <div class="metric">
-                <span>ГВС всего:</span>
-                <strong>${analysis.total_hot_water || 0} м³</strong>
-            </div>
-            <div class="metric">
-                <span>Разница:</span>
-                <strong class="${analysis.difference > 0 ? 'positive' : 'negative'}">
-                    ${analysis.difference || 0} м³ (${analysis.difference_percent ? analysis.difference_percent.toFixed(1) : 0}%)
-                </strong>
-            </div>
-            <div class="metric">
-                <span>Аномалий:</span>
-                <strong>${analysis.anomaly_count || 0}</strong>
-            </div>
-        </div>
-
-        <!-- ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ -->
-        <div class="intelligent-analysis">
-            <h4>🧠 Интеллектуальный анализ</h4>
-            
-            <div class="analysis-item">
-                <strong>Баланс воды:</strong>
-                <span class="status-${analysis.water_balance_status}">
-                    ${statusIcons[analysis.water_balance_status] || '❓'} 
-                    ${getWaterBalanceText(analysis.water_balance_status, analysis)}
-                </span>
-            </div>
-            
-            <div class="analysis-item">
-                <strong>Температурный режим:</strong>
-                <span class="status-${analysis.temperature_status}">
-                    ${statusIcons[analysis.temperature_status] || '❓'}
-                    ${getTemperatureText(analysis.temperature_status, analysis)}
-                </span>
-            </div>
-            
-            <div class="analysis-item">
-                <strong>Состояние насосов:</strong>
-                <span class="status-${analysis.pump_status}">
-                    ${pumpIcons[analysis.pump_status] || '❓'}
-                    ${getPumpStatusText(analysis.pump_status, analysis)}
-                </span>
-            </div>
-
-            <!-- Дополнительная информация если есть детальные данные -->
-            ${analysis.temperature_data ? `
-            <div class="analysis-item" style="font-size: 12px; color: #666;">
-                <strong>Температуры:</strong>
-                <span>Подача: ${analysis.temperature_data.avg_supply_temp}°C, 
-                Возврат: ${analysis.temperature_data.avg_return_temp}°C, 
-                ΔT: ${analysis.temperature_data.avg_delta_temp}°C</span>
-            </div>
-            ` : ''}
-
-            ${analysis.pump_data ? `
-            <div class="analysis-item" style="font-size: 12px; color: #666;">
-                <strong>Насосы:</strong>
-                <span>Всего: ${analysis.pump_data.total_pumps}, 
-                Норма: ${analysis.pump_data.normal_pumps}, 
-                Предупреждение: ${analysis.pump_data.warning_pumps}, 
-                Критично: ${analysis.pump_data.critical_pumps}</span>
-            </div>
-            ` : ''}
-        </div>
-
-        <!-- РЕКОМЕНДАЦИИ -->
-        <div class="recommendations">
-            <h4>💡 Рекомендации системы</h4>
-            <div class="recommendations-list">
-                ${this.renderRecommendations(analysis.recommendations || [])}
-            </div>
-        </div>
-    `;
-
-    container.innerHTML = htmlContent;
-}
-
-// Вспомогательный метод для рендеринга рекомендаций
-renderRecommendations(recommendations) {
-    if (!recommendations || recommendations.length === 0) {
-        return '<div class="recommendation">✅ Все системы работают нормально</div>';
-    }
-    
-    return recommendations.map(rec => {
-        // Определяем иконку по содержанию рекомендации
-        let icon = '💡';
-        if (rec.includes('🚨') || rec.includes('ВНИМАНИЕ') || rec.includes('СРОЧНО')) {
-            icon = '🚨';
-        } else if (rec.includes('⚠️') || rec.includes('Внимание') || rec.includes('Требуется')) {
-            icon = '⚠️';
-        } else if (rec.includes('✅') || rec.includes('Норма') || rec.includes('норме')) {
-            icon = '✅';
-        } else if (rec.includes('🔶') || rec.includes('Отклонение') || rec.includes('наблюдение')) {
-            icon = '🔶';
-        } else if (rec.includes('⚙️') || rec.includes('ТО') || rec.includes('обслуживание')) {
-            icon = '⚙️';
-        } else if (rec.includes('📊') || rec.includes('данн')) {
-            icon = '📊';
-        }
-        
-        return `<div class="recommendation">${icon} ${this.escapeHtml(rec)}</div>`;
-    }).join('');
-}
-
-// Вспомогательные методы для текста статусов
-    getWaterBalanceText(status) {
-        const texts = {
-            normal: 'Норма (подача ≈ возврат + потребление)',
-            leak: 'Возможная утечка (нарушен баланс)',
-            error: 'Ошибка баланса (большое отклонение)'
-        };
-        return texts[status] || 'Неизвестный статус';
-    }
-
-    getTemperatureText(status) {
-        const texts = {
-            normal: 'Норма (ΔT = 17-23°C)',
-            warning: 'Предупреждение (ΔT вне нормы)',
-            critical: 'Критично (ΔT критическое)'
-        };
-        return texts[status] || 'Неизвестный статус';
-    }
-
-    getPumpStatusText(status) {
-        const texts = {
-            normal: 'Норма',
-            maintenance_soon: 'Требуется ТО в ближайшее время',
-            maintenance_required: 'СРОЧНОЕ ТЕХОБСЛУЖИВАНИЕ!'
         };
         return texts[status] || 'Неизвестный статус';
     }
@@ -487,16 +596,35 @@ renderRecommendations(recommendations) {
             return '<div class="recommendation">✅ Все системы работают нормально</div>';
         }
         
-        return recommendations.map(rec => 
-            `<div class="recommendation">${rec}</div>`
-        ).join('');
+        return recommendations.map(rec => {
+            let icon = '💡';
+            if (rec.includes('🚨') || rec.includes('ВНИМАНИЕ') || rec.includes('СРОЧНО')) {
+                icon = '🚨';
+            } else if (rec.includes('⚠️') || rec.includes('Внимание') || rec.includes('Требуется')) {
+                icon = '⚠️';
+            } else if (rec.includes('✅') || rec.includes('Норма') || rec.includes('норме')) {
+                icon = '✅';
+            } else if (rec.includes('🔶') || rec.includes('Отклонение') || rec.includes('наблюдение')) {
+                icon = '🔶';
+            } else if (rec.includes('⚙️') || rec.includes('ТО') || rec.includes('обслуживание')) {
+                icon = '⚙️';
+            } else if (rec.includes('📊') || rec.includes('данн')) {
+                icon = '📊';
+            }
+            
+            return `<div class="recommendation">${icon} ${this.escapeHtml(rec)}</div>`;
+        }).join('');
     }
 
     showSection(sectionId) {
         console.log(`📱 Переключение на раздел: ${sectionId}`);
         
-        // Останавливаем мониторинг реального времени при переключении секций
-        this.stopRealtimeMonitoring();
+        // Управление режимом реального времени
+        if (sectionId === 'realtime') {
+            this.startRealtimeMonitoring();
+        } else {
+            this.stopRealtimeMonitoring();
+        }
         
         // Скрываем все секции
         document.querySelectorAll('.section').forEach(section => {
@@ -516,37 +644,27 @@ renderRecommendations(recommendations) {
                 link.classList.add('active');
             }
         });
-        
-        // Запускаем мониторинг если перешли в секцию реального времени
-        if (sectionId === 'realtime') {
-            setTimeout(() => {
-                this.startRealtimeMonitoring();
-            }, 100);
-        }
     }
 
-    // МОНИТОРИНГ В РЕАЛЬНОМ ВРЕМЕНИ
+    // РЕАЛЬНОЕ ВРЕМЯ С WebSocket
     startRealtimeMonitoring() {
         console.log("⏰ Запуск мониторинга в реальном времени");
+        this.isRealtimeActive = true;
         
-        // Останавливаем предыдущий интервал если есть
-        this.stopRealtimeMonitoring();
-        
-        // Обновляем данные каждые 3 секунды
-        this.realtimeInterval = setInterval(() => {
-            this.updateRealtimeData();
-        }, 3000);
-        
-        // Первое обновление сразу
+        // Загружаем начальные данные
         this.updateRealtimeData();
+        
+        this.showNotification('🔴 Режим реального времени активирован', 'success');
     }
 
     stopRealtimeMonitoring() {
-        if (this.realtimeInterval) {
-            clearInterval(this.realtimeInterval);
-            this.realtimeInterval = null;
-            console.log("⏹️ Остановлен мониторинг реального времени");
-        }
+        console.log("⏹️ Остановка мониторинга реального времени");
+        this.isRealtimeActive = false;
+    }
+
+    handleRealtimeUpdate(data) {
+        console.log("📊 Обновление данных реального времени:", data);
+        this.displayRealtimeData(data.data);
     }
 
     async updateRealtimeData() {
@@ -565,57 +683,84 @@ renderRecommendations(recommendations) {
             this.displayRealtimeData(data);
         } catch (error) {
             console.error("❌ Ошибка обновления реального времени:", error);
-            // Используем демо-данные если API недоступно
             this.displayDemoRealtimeData();
         }
     }
 
     displayRealtimeData(data) {
-        console.log("📊 Обновление данных реального времени:", data);
-        
         // Холодная вода - подача
         const coldWaterIn = data.cold_water?.total_flow_rate || data.coldWaterIn || 0;
-        document.getElementById('coldWaterIn').textContent = `${coldWaterIn} м³/ч`;
+        this.updateMetric('coldWaterIn', coldWaterIn, 'м³/ч');
         
         // Горячая вода - канал 1
         const hotWaterCh1 = data.hot_water?.flow_rate_ch1 || data.hotWaterCh1 || 0;
-        document.getElementById('hotWaterCh1').textContent = `${hotWaterCh1} м³/ч`;
+        this.updateMetric('hotWaterCh1', hotWaterCh1, 'м³/ч');
         
         // Горячая вода - канал 2  
         const hotWaterCh2 = data.hot_water?.flow_rate_ch2 || data.hotWaterCh2 || 0;
-        document.getElementById('hotWaterCh2').textContent = `${hotWaterCh2} м³/ч`;
+        this.updateMetric('hotWaterCh2', hotWaterCh2, 'м³/ч');
         
         // Холодная вода - возврат (примерно 80% от подачи)
         const coldWaterOut = Math.round(coldWaterIn * 0.8);
-        document.getElementById('coldWaterOut').textContent = `${coldWaterOut} м³/ч`;
+        this.updateMetric('coldWaterOut', coldWaterOut, 'м³/ч');
+        
+        // Температурные данные
+        if (data.temperature) {
+            this.updateTemperatureData(data.temperature);
+        }
         
         // Обновляем тренды
         this.updateTrends();
         
         // Обновляем график
-        this.updateRealtimeChart(data);
+        this.updateRealtimeChart(coldWaterIn, coldWaterOut, hotWaterCh1, hotWaterCh2);
+        
+        // Обновляем timestamp
+        const timestampElement = document.getElementById('realtimeTimestamp');
+        if (timestampElement) {
+            timestampElement.textContent = new Date().toLocaleTimeString('ru-RU');
+        }
+    }
+
+    updateMetric(elementId, value, unit) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.textContent = `${value} ${unit}`;
+        }
+    }
+
+    updateTemperatureData(tempData) {
+        const tempElement = document.getElementById('temperatureData');
+        if (tempElement && tempData.supply_temp) {
+            tempElement.innerHTML = `
+                <div style="display: flex; justify-content: space-around; margin-top: 10px; font-size: 12px; color: #666;">
+                    <span>Подача: ${tempData.supply_temp}°C</span>
+                    <span>Возврат: ${tempData.return_temp}°C</span>
+                    <span>ΔT: ${tempData.delta_temp}°C</span>
+                </div>
+            `;
+        }
     }
 
     displayDemoRealtimeData() {
         console.log("🎮 Использование демо-данных реального времени");
         
         // Демо-данные когда API недоступно
-        const coldWaterIn = 50 + Math.floor(Math.random() * 50); // 50-100
-        const hotWaterCh1 = 20 + Math.floor(Math.random() * 30); // 20-50
-        const hotWaterCh2 = 10 + Math.floor(Math.random() * 20); // 10-30
-        const coldWaterOut = Math.round(coldWaterIn * 0.8); // 80% от подачи
+        const coldWaterIn = 50 + Math.floor(Math.random() * 50);
+        const hotWaterCh1 = 20 + Math.floor(Math.random() * 30);
+        const hotWaterCh2 = 10 + Math.floor(Math.random() * 20);
+        const coldWaterOut = Math.round(coldWaterIn * 0.8);
     
-        document.getElementById('coldWaterIn').textContent = `${coldWaterIn} м³/ч`;
-        document.getElementById('coldWaterOut').textContent = `${coldWaterOut} м³/ч`;
-        document.getElementById('hotWaterCh1').textContent = `${hotWaterCh1} м³/ч`;
-        document.getElementById('hotWaterCh2').textContent = `${hotWaterCh2} м³/ч`;
+        this.updateMetric('coldWaterIn', coldWaterIn, 'м³/ч');
+        this.updateMetric('coldWaterOut', coldWaterOut, 'м³/ч');
+        this.updateMetric('hotWaterCh1', hotWaterCh1, 'м³/ч');
+        this.updateMetric('hotWaterCh2', hotWaterCh2, 'м³/ч');
         
         this.updateTrends();
         this.updateDemoChart(coldWaterIn, coldWaterOut, hotWaterCh1, hotWaterCh2);
     }
 
     updateTrends() {
-        // Случайные тренды для демонстрации
         const trends = [
             { class: 'up', text: '+' + (1 + Math.floor(Math.random() * 10)) + '%' },
             { class: 'down', text: '-' + (1 + Math.floor(Math.random() * 5)) + '%' },
@@ -630,14 +775,9 @@ renderRecommendations(recommendations) {
         });
     }
 
-    updateRealtimeChart(data) {
+    updateRealtimeChart(coldWaterIn, coldWaterOut, hotWaterCh1, hotWaterCh2) {
         const ctx = document.getElementById('realtimeChart');
         if (!ctx) return;
-        
-        const coldWaterIn = data.cold_water?.total_flow_rate || 0;
-        const coldWaterOut = Math.round(coldWaterIn * 0.8);
-        const hotWaterCh1 = data.hot_water?.flow_rate_ch1 || 0;
-        const hotWaterCh2 = data.hot_water?.flow_rate_ch2 || 0;
         
         this.createOrUpdateChart(ctx, coldWaterIn, coldWaterOut, hotWaterCh1, hotWaterCh2);
     }
@@ -693,12 +833,41 @@ renderRecommendations(recommendations) {
                 }
             });
         } else {
-            // Обновляем данные графика
             this.realtimeChart.data.datasets[0].data = [coldWaterIn, coldWaterOut, hotWaterCh1, hotWaterCh2];
             this.realtimeChart.update('active');
         }
     }
 
+    // Управление генератором данных
+    async startDataGenerator() {
+        try {
+            await this.api.startGenerator();
+            this.showNotification('🚀 Генератор данных запущен', 'success');
+        } catch (error) {
+            this.showError('Ошибка запуска генератора: ' + error.message);
+        }
+    }
+
+    async stopDataGenerator() {
+        try {
+            await this.api.stopGenerator();
+            this.showNotification('🛑 Генератор данных остановлен', 'warning');
+        } catch (error) {
+            this.showError('Ошибка остановки генератора: ' + error.message);
+        }
+    }
+
+    async generateBuildingData(buildingId) {
+        try {
+            await this.api.generateCompleteHistory(1); // 1 день данных
+            this.showNotification('📊 Данные успешно сгенерированы', 'success');
+            this.hideModal();
+        } catch (error) {
+            this.showError('Ошибка генерации данных: ' + error.message);
+        }
+    }
+
+    // Вспомогательные методы
     showModal() {
         const modal = document.getElementById('buildingModal');
         if (modal) {
@@ -715,7 +884,54 @@ renderRecommendations(recommendations) {
 
     showError(message) {
         console.error("❌ Показать ошибку:", message);
-        alert(`Ошибка: ${message}`);
+        this.showNotification(message, 'error');
+    }
+
+    showNotification(message, type = 'info') {
+        // Создаем уведомление
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 4px;
+            color: white;
+            z-index: 10000;
+            max-width: 400px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        `;
+        
+        const bgColors = {
+            success: '#27ae60',
+            error: '#e74c3c',
+            warning: '#f39c12',
+            info: '#3498db'
+        };
+        
+        notification.style.background = bgColors[type] || bgColors.info;
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        // Автоматически удаляем через 5 секунд
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 300);
+        }, 5000);
+    }
+
+    updateConnectionStatus(connected) {
+        const statusElement = document.getElementById('connectionStatus');
+        if (statusElement) {
+            statusElement.textContent = connected ? '🟢 Подключено' : '🔴 Отключено';
+            statusElement.style.color = connected ? '#27ae60' : '#e74c3c';
+        }
     }
 
     showTestData() {
@@ -728,33 +944,12 @@ renderRecommendations(recommendations) {
                 unom_id: 'unom-1001',
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
-            },
-            {
-                id: 'test-2',
-                address: 'г. Москва, пр. Мира, д. 25', 
-                fias_id: 'fias-002',
-                unom_id: 'unom-1002',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            },
-            {
-                id: 'test-3',
-                address: 'г. Москва, ул. Гагарина, д. 15',
-                fias_id: 'fias-003',
-                unom_id: 'unom-1003',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
             }
         ];
         
         this.buildings = testBuildings;
         this.renderBuildings(testBuildings);
         this.populateBuildingSelect(testBuildings);
-        
-        // Устанавливаем первое здание для мониторинга
-        if (testBuildings.length > 0) {
-            this.currentBuilding = testBuildings[0].id;
-        }
     }
 
     escapeHtml(text) {
