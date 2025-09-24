@@ -154,6 +154,9 @@ func (h *Handler) AnalyzeBuilding(c *gin.Context) {
 }
 
 // Данные реального времени
+// handlers.go - замените метод GetRealtimeData
+
+// Получение реальных данных из БД за последние 5 минут
 func (h *Handler) GetRealtimeData(c *gin.Context) {
     buildingIDStr := c.Param("id")
     buildingID, err := uuid.Parse(buildingIDStr)
@@ -162,53 +165,65 @@ func (h *Handler) GetRealtimeData(c *gin.Context) {
         return
     }
 
-    // Получаем последние данные по ГВС
+    // Период для реального времени - последние 5 минут
+    timeFrom := time.Now().Add(-5 * time.Minute)
+
+    // Получаем последние данные ГВС
     var hotWaterData struct {
         FlowRateCh1 int       `json:"flow_rate_ch1"`
         FlowRateCh2 int       `json:"flow_rate_ch2"`
+        TotalFlow   int       `json:"total_flow"`
         Timestamp   time.Time `json:"timestamp"`
     }
 
     err = h.pool.QueryRow(context.Background(), `
-        SELECT flow_rate_ch1, flow_rate_ch2, timestamp 
+        SELECT flow_rate_ch1, flow_rate_ch2, (flow_rate_ch1 + flow_rate_ch2) as total_flow, timestamp 
         FROM hot_water_meters 
         WHERE building_id = $1 
         AND timestamp >= $2
         ORDER BY timestamp DESC 
         LIMIT 1`, 
-        buildingID, time.Now().Add(-1*time.Hour)).Scan(
-        &hotWaterData.FlowRateCh1, &hotWaterData.FlowRateCh2, &hotWaterData.Timestamp)
+        buildingID, timeFrom).Scan(
+        &hotWaterData.FlowRateCh1, &hotWaterData.FlowRateCh2, &hotWaterData.TotalFlow, &hotWaterData.Timestamp)
 
     if err != nil {
-        hotWaterData = struct {
-            FlowRateCh1 int       `json:"flow_rate_ch1"`
-            FlowRateCh2 int       `json:"flow_rate_ch2"`
-            Timestamp   time.Time `json:"timestamp"`
-        }{
-            FlowRateCh1: 20 + rand.Intn(30),
-            FlowRateCh2: 10 + rand.Intn(20),
-            Timestamp:   time.Now(),
-        }
+        // Если нет свежих данных, берем последние доступные
+        h.pool.QueryRow(context.Background(), `
+            SELECT flow_rate_ch1, flow_rate_ch2, (flow_rate_ch1 + flow_rate_ch2) as total_flow, timestamp 
+            FROM hot_water_meters 
+            WHERE building_id = $1 
+            ORDER BY timestamp DESC 
+            LIMIT 1`, 
+            buildingID).Scan(
+            &hotWaterData.FlowRateCh1, &hotWaterData.FlowRateCh2, &hotWaterData.TotalFlow, &hotWaterData.Timestamp)
     }
 
-    // Получаем последние данные по ХВС
+    // Получаем последние данные ХВС
     var coldWaterData struct {
         TotalFlowRate int       `json:"total_flow_rate"`
         Timestamp     time.Time `json:"timestamp"`
     }
 
     err = h.pool.QueryRow(context.Background(), `
-        SELECT COALESCE(SUM(cwm.flow_rate), 0), MAX(cwm.timestamp)
+        SELECT cwm.flow_rate, cwm.timestamp
         FROM cold_water_meters cwm
         JOIN itp i ON cwm.itp_id = i.id
         WHERE i.building_id = $1 
-        AND cwm.timestamp >= $2`, 
-        buildingID, time.Now().Add(-1*time.Hour)).Scan(
-        &coldWaterData.TotalFlowRate, &coldWaterData.Timestamp)
+        AND cwm.timestamp >= $2
+        ORDER BY cwm.timestamp DESC 
+        LIMIT 1`, 
+        buildingID, timeFrom).Scan(&coldWaterData.TotalFlowRate, &coldWaterData.Timestamp)
 
-    if err != nil || coldWaterData.TotalFlowRate == 0 {
-        coldWaterData.TotalFlowRate = 40 + rand.Intn(60)
-        coldWaterData.Timestamp = time.Now()
+    if err != nil {
+        // Если нет свежих данных, берем последние доступные
+        h.pool.QueryRow(context.Background(), `
+            SELECT cwm.flow_rate, cwm.timestamp
+            FROM cold_water_meters cwm
+            JOIN itp i ON cwm.itp_id = i.id
+            WHERE i.building_id = $1 
+            ORDER BY cwm.timestamp DESC 
+            LIMIT 1`, 
+            buildingID).Scan(&coldWaterData.TotalFlowRate, &coldWaterData.Timestamp)
     }
 
     // Получаем температурные данные
@@ -226,32 +241,88 @@ func (h *Handler) GetRealtimeData(c *gin.Context) {
         AND timestamp >= $2
         ORDER BY timestamp DESC 
         LIMIT 1`, 
-        buildingID, time.Now().Add(-1*time.Hour)).Scan(
+        buildingID, timeFrom.Add(-30*time.Minute)).Scan( // Температура меняется реже
         &tempData.SupplyTemp, &tempData.ReturnTemp, &tempData.DeltaTemp, &tempData.Timestamp)
 
-    // Если нет температурных данных, используем реалистичные значения
-    if tempData.SupplyTemp == 0 {
-        tempData = struct {
-            SupplyTemp int       `json:"supply_temp"`
-            ReturnTemp int       `json:"return_temp"`
-            DeltaTemp  int       `json:"delta_temp"`
-            Timestamp  time.Time `json:"timestamp"`
-        }{
-            SupplyTemp: 65 + rand.Intn(5),
-            ReturnTemp: 42 + rand.Intn(4),
-            DeltaTemp:  23,
-            Timestamp:  time.Now(),
-        }
+    // Получаем историю за последние 30 минут для графика
+    chartData, err := h.getRealtimeChartData(buildingID, 30)
+    if err != nil {
+        fmt.Printf("Error getting chart data: %v\n", err)
     }
 
     c.JSON(http.StatusOK, gin.H{
         "hot_water": hotWaterData,
         "cold_water": coldWaterData,
         "temperature": tempData,
+        "chart_data": chartData,
         "timestamp": time.Now(),
         "building_id": buildingID,
-        "update_id": time.Now().Unix(),
+        "data_source": "database",
     })
+}
+
+// Данные для графика за последние N минут
+func (h *Handler) getRealtimeChartData(buildingID uuid.UUID, minutes int) (gin.H, error) {
+    timeFrom := time.Now().Add(-time.Duration(minutes) * time.Minute)
+
+    // Данные ГВС
+    rows, err := h.pool.Query(context.Background(), `
+        SELECT timestamp, flow_rate_ch1, flow_rate_ch2, (flow_rate_ch1 + flow_rate_ch2) as total_flow
+        FROM hot_water_meters 
+        WHERE building_id = $1 
+        AND timestamp >= $2
+        ORDER BY timestamp ASC`,
+        buildingID, timeFrom)
+    
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var hotWaterData []gin.H
+    for rows.Next() {
+        var timestamp time.Time
+        var ch1, ch2, total int
+        rows.Scan(&timestamp, &ch1, &ch2, &total)
+        hotWaterData = append(hotWaterData, gin.H{
+            "timestamp": timestamp.Format("15:04"),
+            "ch1": ch1,
+            "ch2": ch2,
+            "total": total,
+        })
+    }
+
+    // Данные ХВС
+    rows, err = h.pool.Query(context.Background(), `
+        SELECT cwm.timestamp, cwm.flow_rate
+        FROM cold_water_meters cwm
+        JOIN itp i ON cwm.itp_id = i.id
+        WHERE i.building_id = $1 
+        AND cwm.timestamp >= $2
+        ORDER BY cwm.timestamp ASC`,
+        buildingID, timeFrom)
+    
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var coldWaterData []gin.H
+    for rows.Next() {
+        var timestamp time.Time
+        var flowRate int
+        rows.Scan(&timestamp, &flowRate)
+        coldWaterData = append(coldWaterData, gin.H{
+            "timestamp": timestamp.Format("15:04"),
+            "flow_rate": flowRate,
+        })
+    }
+
+    return gin.H{
+        "hot_water": hotWaterData,
+        "cold_water": coldWaterData,
+        "time_range": fmt.Sprintf("last_%d_minutes", minutes),
+    }, nil
 }
 
 // Остальные методы...
@@ -721,3 +792,4 @@ func (h *Handler) GenerateHistory(c *gin.Context) {
         "days": days,
     })
 }
+

@@ -6,6 +6,7 @@ import (
     "math/rand"
     "time"
 
+    "github.com/gin-gonic/gin"
     "github.com/jackc/pgx/v5/pgxpool"
     "github.com/google/uuid"
 )
@@ -59,8 +60,9 @@ func (dg *DataGenerator) IsRunning() bool {
 
 
 // Генерация водных данных (каждые 30 секунд)
+// generator.go - в методе startWaterDataGeneration
 func (dg *DataGenerator) startWaterDataGeneration() {
-    ticker := time.NewTicker(30 * time.Second)
+    ticker := time.NewTicker(1 * time.Second) // Каждую секунду 
     defer ticker.Stop()
 
     for {
@@ -68,7 +70,7 @@ func (dg *DataGenerator) startWaterDataGeneration() {
         case <-dg.ctx.Done():
             return
         case <-ticker.C:
-            dg.generateWaterData()
+            dg.generateRealtimeData() // Используем новый метод
         }
     }
 }
@@ -451,4 +453,115 @@ func (dg *DataGenerator) GenerateCompleteHistoricalData(ctx context.Context, day
 // Старый метод для обратной совместимости
 func (dg *DataGenerator) GenerateHistoricalData(ctx context.Context, days int) error {
     return dg.GenerateCompleteHistoricalData(ctx, days)
+}
+
+// generator.go - добавьте эти методы
+
+// Генерация данных в реальном времени (каждые 30 секунд)
+func (dg *DataGenerator) generateRealtimeData() {
+    buildings, err := dg.getBuildings()
+    if err != nil {
+        fmt.Printf("Error getting buildings for realtime: %v\n", err)
+        return
+    }
+
+    currentTime := time.Now()
+    
+    for _, building := range buildings {
+        // Более частые и реалистичные данные для реального времени
+        hour := currentTime.Hour()
+        var activityMultiplier float64
+        
+        // Реалистичные суточные колебания
+        switch {
+        case hour >= 7 && hour <= 10: // Утро - пик
+            activityMultiplier = 1.8 + rand.Float64()*0.4
+        case hour >= 18 && hour <= 22: // Вечер - пик
+            activityMultiplier = 2.0 + rand.Float64()*0.6
+        case hour >= 23 || hour <= 6: // Ночь - минимум
+            activityMultiplier = 0.4 + rand.Float64()*0.3
+        default: // День - средняя активность
+            activityMultiplier = 1.2 + rand.Float64()*0.4
+        }
+
+        // Базовые значения с реалистичными соотношениями
+        baseHotWater1 := 3.0 + rand.Float64()*2.0
+        baseHotWater2 := 2.0 + rand.Float64()*1.5
+        baseColdWater := (baseHotWater1 + baseHotWater2) * 1.3 // ХВС всегда больше ГВС
+
+        // Применяем суточный коэффициент
+        hotWater1 := int(baseHotWater1 * activityMultiplier)
+        hotWater2 := int(baseHotWater2 * activityMultiplier)
+        coldWater := int(baseColdWater * activityMultiplier)
+
+        // Данные ГВС
+        _, err := dg.pool.Exec(dg.ctx, `
+            INSERT INTO hot_water_meters (id, building_id, flow_rate_ch1, flow_rate_ch2, timestamp, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())`,
+            uuid.New(), building.ID, hotWater1, hotWater2, currentTime)
+        
+        if err != nil {
+            fmt.Printf("Error inserting realtime hot water data: %v\n", err)
+            continue
+        }
+
+        // Данные ХВС
+        itpID, err := dg.getITPForBuilding(building.ID)
+        if err == nil {
+            _, err = dg.pool.Exec(dg.ctx, `
+                INSERT INTO cold_water_meters (id, itp_id, flow_rate, timestamp, created_at)
+                VALUES ($1, $2, $3, $4, NOW())`,
+                uuid.New(), itpID, coldWater, currentTime)
+            
+            if err != nil {
+                fmt.Printf("Error inserting realtime cold water data: %v\n", err)
+            }
+        }
+
+        // Температурные данные (реже - раз в 2 минуты)
+        if currentTime.Minute()%2 == 0 { // Каждую четную минуту
+            supplyTemp := 65 + rand.Intn(5)
+            returnTemp := 42 + rand.Intn(4)
+            deltaTemp := supplyTemp - returnTemp
+
+            _, err = dg.pool.Exec(dg.ctx, `
+                INSERT INTO temperature_readings (id, building_id, supply_temp, return_temp, delta_temp, timestamp, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+                uuid.New(), building.ID, supplyTemp, returnTemp, deltaTemp, currentTime)
+            
+            if err != nil {
+                fmt.Printf("Error inserting realtime temperature data: %v\n", err)
+            }
+        }
+
+        // Отправляем обновление через WebSocket
+        dg.broadcastRealtimeUpdate(building.ID, gin.H{
+            "hot_water": gin.H{
+                "flow_rate_ch1": hotWater1,
+                "flow_rate_ch2": hotWater2,
+                "timestamp":     currentTime,
+            },
+            "cold_water": gin.H{
+                "total_flow_rate": coldWater,
+                "timestamp":       currentTime,
+            },
+            "temperature": gin.H{
+                "supply_temp": 65 + rand.Intn(5),
+                "return_temp": 42 + rand.Intn(4),
+                "delta_temp":  23,
+                "timestamp":   currentTime,
+            },
+            "building_id": building.ID,
+            "timestamp":   currentTime,
+        })
+    }
+
+    fmt.Printf("Realtime data generated for %d buildings at %s\n", 
+        len(buildings), currentTime.Format("15:04:05"))
+}
+
+// WebSocket broadcast для реального времени
+func (dg *DataGenerator) broadcastRealtimeUpdate(buildingID uuid.UUID, data interface{}) {
+    // Этот метод будет интегрирован с main.go через канал
+    fmt.Printf("📡 Broadcasting update for building %s\n", buildingID.String())
 }
