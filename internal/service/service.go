@@ -89,7 +89,7 @@ func (a *Analyzer) AnalyzeConsumption(ctx context.Context, buildingID uuid.UUID,
         dataSource = "database"
         
         // Добавляем информацию о качестве данных
-        infoMsg := fmt.Sprintf("📊 Данные основаны на %d записях ХВС и %d записях ГВС из БД", coldRecords, hotRecords)
+        infoMsg := fmt.Sprintf("Данные основаны на %d записях ХВС и %d записях ГВС из БД", coldRecords, hotRecords)
         if hasTempData {
             infoMsg += fmt.Sprintf(", %d температурных записях", tempData.RecordsCount)
         }
@@ -522,25 +522,25 @@ func (a *Analyzer) generateRecommendationsReal(waterBalance, temperatureStatus, 
     switch waterBalance {
     case "leak":
         recommendations = append(recommendations, 
-            "🚨 ВНИМАНИЕ: Возможна утечка или некорректные показания")
+            "ВНИМАНИЕ: Возможна утечка или некорректные показания")
         recommendations = append(recommendations, 
             fmt.Sprintf("Соотношение ГВС/ХВС: %.1f%% (норма: 40-70%%)", hotToColdRatioPercent))
     case "error":
         recommendations = append(recommendations, 
-            "⚠️ Возможна ошибка в данных счетчиков")
+            "Возможна ошибка в данных счетчиков")
         recommendations = append(recommendations, 
             fmt.Sprintf("Соотношение ГВС/ХВС: %.1f%% (норма: 40-70%%)", hotToColdRatioPercent))
     case "warning":
         recommendations = append(recommendations, 
-            "🔶 Небольшое отклонение от нормы, требуется наблюдение")
+            "Небольшое отклонение от нормы, требуется наблюдение")
         recommendations = append(recommendations, 
             fmt.Sprintf("Соотношение ГВС/ХВС: %.1f%% (норма: 40-70%%)", hotToColdRatioPercent))
     case "normal":
         recommendations = append(recommendations, 
-            fmt.Sprintf("✅ Баланс в норме. Соотношение ГВС/ХВС: %.1f%%", hotToColdRatioPercent))
+            fmt.Sprintf("Баланс в норме. Соотношение ГВС/ХВС: %.1f%%", hotToColdRatioPercent))
     default:
         recommendations = append(recommendations, 
-            "❓ Недостаточно данных для анализа баланса")
+            "Недостаточно данных для анализа баланса")
     }
 
     // Анализ температуры
@@ -548,20 +548,20 @@ func (a *Analyzer) generateRecommendationsReal(waterBalance, temperatureStatus, 
         switch temperatureStatus {
         case "normal":
             recommendations = append(recommendations, 
-                fmt.Sprintf("✅ Температурный режим в норме (ΔT=%d°C)", tempData.AvgDeltaTemp))
+                fmt.Sprintf("Температурный режим в норме (ΔT=%d°C)", tempData.AvgDeltaTemp))
         case "warning":
             recommendations = append(recommendations, 
-                fmt.Sprintf("🔶 Температурный режим требует внимания (ΔT=%d°C, норма: 17-23°C)", tempData.AvgDeltaTemp))
+                fmt.Sprintf("Температурный режим требует внимания (ΔT=%d°C, норма: 17-23°C)", tempData.AvgDeltaTemp))
         case "critical":
             recommendations = append(recommendations, 
-                fmt.Sprintf("🚨 Критическое отклонение температуры (ΔT=%d°C)", tempData.AvgDeltaTemp))
+                fmt.Sprintf("Критическое отклонение температуры (ΔT=%d°C)", tempData.AvgDeltaTemp))
         case "unknown":
             recommendations = append(recommendations, 
-                "❓ Данные о температуре отсутствуют")
+                "Данные о температуре отсутствуют")
         }
     } else {
         recommendations = append(recommendations, 
-            "❓ Данные о температуре отсутствуют")
+            "Данные о температуре отсутствуют")
     }
 
     // Анализ насосов
@@ -578,36 +578,36 @@ func (a *Analyzer) generateRecommendationsReal(waterBalance, temperatureStatus, 
         switch pumpStatus {
         case "normal":
             recommendations = append(recommendations, 
-                fmt.Sprintf("✅ Состояние насосов в норме (макс. наработка: %d ч)", operatingHours))
+                fmt.Sprintf("Состояние насосов в норме (макс. наработка: %d ч)", operatingHours))
         case "warning":
             recommendations = append(recommendations, 
-                fmt.Sprintf("🔶 Требуется внимание к насосам (макс. наработка: %d ч)", operatingHours))
+                fmt.Sprintf("Требуется внимание к насосам (макс. наработка: %d ч)", operatingHours))
         case "critical":
             recommendations = append(recommendations, 
-                fmt.Sprintf("🚨 Срочное обслуживание насосов требуется (макс. наработка: %d ч)", operatingHours))
+                fmt.Sprintf("Срочное обслуживание насосов требуется (макс. наработка: %d ч)", operatingHours))
         case "unknown":
             recommendations = append(recommendations, 
-                "❓ Данные о насосах отсутствуют")
+                "Данные о насосах отсутствуют")
         }
         
         if operatingHours > 8000 {
             recommendations = append(recommendations, 
-                "⚙️ Рекомендуется плановое техническое обслуживание")
+                "Рекомендуется плановое техническое обслуживание")
         }
     } else {
         recommendations = append(recommendations, 
-            "❓ Данные о насосах отсутствуют")
+            "Данные о насосах отсутствуют")
     }
 
     // Рекомендации по качеству данных
     if coldRecords < 24 {
         recommendations = append(recommendations, 
-            "📊 Рекомендуется увеличить частоту сбора данных ХВС")
+            "Рекомендуется увеличить частоту сбора данных ХВС")
     }
 
     if hotRecords < 24 {
         recommendations = append(recommendations, 
-            "📊 Рекомендуется увеличить частоту сбора данных ГВС")
+            "Рекомендуется увеличить частоту сбора данных ГВС")
     }
 
     return recommendations

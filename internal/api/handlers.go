@@ -146,7 +146,7 @@ func (h *Handler) AnalyzeBuilding(c *gin.Context) {
             TemperatureStatus:  []string{"normal", "warning", "critical"}[rand.Intn(3)],
             PumpStatus:         []string{"normal", "maintenance_soon", "maintenance_required"}[rand.Intn(3)],
             PumpOperatingHours: 5000 + rand.Intn(7000),
-            Recommendations:    []string{"✅ Система работает нормально", "⚠️ Рекомендуется проверить насосы"},
+            Recommendations:    []string{"Система работает нормально", "Рекомендуется проверить насосы"},
         }
     }
 

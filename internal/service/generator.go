@@ -32,7 +32,7 @@ func (dg *DataGenerator) StartContinuousGeneration(ctx context.Context) {
     dg.ctx, dg.cancel = context.WithCancel(ctx)
     dg.isRunning = true
 
-    fmt.Println("🚀 Starting continuous data generation...")
+    fmt.Println("Starting continuous data generation...")
 
     // Запускаем различные тикеры для разных типов данных
     go dg.startWaterDataGeneration()
@@ -40,7 +40,7 @@ func (dg *DataGenerator) StartContinuousGeneration(ctx context.Context) {
     go dg.startPumpDataGeneration()
     go dg.startRealtimeUpdates()
 
-    fmt.Println("✅ Continuous data generation started")
+    fmt.Println("Continuous data generation started")
 }
 
 // Остановка генерации
@@ -48,7 +48,7 @@ func (dg *DataGenerator) Stop() {
     if dg.isRunning && dg.cancel != nil {
         dg.cancel()
         dg.isRunning = false
-        fmt.Println("🛑 Data generation stopped")
+        fmt.Println("Data generation stopped")
     }
 }
 
@@ -218,7 +218,7 @@ func (dg *DataGenerator) generateTemperatureDataForAllBuildings() {
         }
     }
 
-    fmt.Printf("🌡️ Temperature data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
+    fmt.Printf("Temperature data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
 }
 
 // Генерация данных насосов для всех зданий
@@ -268,14 +268,14 @@ func (dg *DataGenerator) generatePumpDataForAllBuildings() {
         }
     }
 
-    fmt.Printf("⚙️ Pump data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
+    fmt.Printf("Pump data generated for %d buildings at %s\n", len(buildings), currentTime.Format("15:04:05"))
 }
 
 // Уведомление о новых данных (заглушка для веб-сокетов)
 func (dg *DataGenerator) broadcastDataUpdate() {
     // Здесь будет логика для веб-сокетов
     // Пока просто логируем
-    fmt.Printf("📡 Data update broadcast at %s\n", time.Now().Format("15:04:05"))
+    fmt.Printf("Data update broadcast at %s\n", time.Now().Format("15:04:05"))
 }
 
 // Вспомогательные методы

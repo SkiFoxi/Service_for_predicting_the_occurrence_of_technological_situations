@@ -7,7 +7,7 @@ class WaterMonitoringAPI {
 
     async request(endpoint, options = {}) {
         const url = `${this.baseUrl}${endpoint}`;
-        console.log(`🔄 API запрос: ${url}`);
+        console.log(` API запрос: ${url}`);
         
         try {
             const response = await fetch(url, {
@@ -18,17 +18,17 @@ class WaterMonitoringAPI {
                 ...options
             });
 
-            console.log(`📊 Статус ответа: ${response.status}`);
+            console.log(` Статус ответа: ${response.status}`);
             
             if (!response.ok) {
                 throw new Error(`Ошибка HTTP! статус: ${response.status}`);
             }
 
             const data = await response.json();
-            console.log('✅ Данные получены');
+            console.log(' Данные получены');
             return data;
         } catch (error) {
-            console.error('❌ Ошибка API:', error);
+            console.error(' Ошибка API:', error);
             throw error;
         }
     }
@@ -88,7 +88,7 @@ class RealtimeManager {
             this.ws = new WebSocket(wsUrl);
             
             this.ws.onopen = () => {
-                console.log('🔗 WebSocket connected');
+                console.log(' WebSocket connected');
                 this.reconnectAttempts = 0;
                 this.isConnected = true;
                 
@@ -105,7 +105,7 @@ class RealtimeManager {
             this.ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('📨 WebSocket message:', data.type);
+                    console.log(' WebSocket message:', data.type);
                     this.handleMessage(data);
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);
@@ -113,7 +113,7 @@ class RealtimeManager {
             };
 
             this.ws.onclose = (event) => {
-                console.log('🔌 WebSocket disconnected:', event.code, event.reason);
+                console.log(' WebSocket disconnected:', event.code, event.reason);
                 this.isConnected = false;
                 this.notifyHandlers('disconnected', { code: event.code, reason: event.reason });
                 this.handleReconnect();
@@ -176,13 +176,13 @@ class RealtimeManager {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             const delay = this.reconnectDelay * this.reconnectAttempts;
-            console.log(`🔄 Attempting to reconnect in ${delay}ms... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+            console.log(` Attempting to reconnect in ${delay}ms... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
             
             setTimeout(() => {
                 this.connect();
             }, delay);
         } else {
-            console.error('❌ Max reconnection attempts reached');
+            console.error(' Max reconnection attempts reached');
             this.notifyHandlers('reconnect_failed', {});
         }
     }
@@ -213,7 +213,7 @@ class WaterMonitoringApp {
     }
 
     async init() {
-        console.log("🚀 Инициализация приложения...");
+        console.log(" Инициализация приложения...");
         this.setupEventListeners();
         this.setupRealtimeHandlers();
         await this.loadBuildings();
@@ -221,19 +221,19 @@ class WaterMonitoringApp {
         // Подключаемся к WebSocket
         this.realtimeManager.connect();
         
-        console.log("✅ Приложение готово");
+        console.log(" Приложение готово");
     }
 
     setupRealtimeHandlers() {
         // Обработчик подключения WebSocket
         this.realtimeManager.on('connected', (data) => {
-            this.showNotification('🔗 Подключено к серверу в реальном времени', 'success');
+            this.showNotification(' Подключено к серверу в реальном времени', 'success');
             this.updateConnectionStatus(true);
         });
 
         // Обработчик отключения WebSocket
         this.realtimeManager.on('disconnected', (data) => {
-            this.showNotification('🔌 Отключено от сервера', 'warning');
+            this.showNotification(' Отключено от сервера', 'warning');
             this.updateConnectionStatus(false);
         });
 
@@ -247,7 +247,7 @@ class WaterMonitoringApp {
         // Обработчик ошибок
         this.realtimeManager.on('error', (data) => {
             console.error('WebSocket error:', data.error);
-            this.showNotification('❌ Ошибка соединения', 'error');
+            this.showNotification(' Ошибка соединения', 'error');
         });
 
         // Пинг-понг для поддержания соединения
@@ -283,7 +283,7 @@ class WaterMonitoringApp {
         const analyzeBtn = document.getElementById('analyzeBtn');
         if (analyzeBtn) {
             analyzeBtn.addEventListener('click', () => {
-                console.log("📊 Кнопка анализа нажата");
+                console.log(" Кнопка анализа нажата");
                 this.analyzeSelectedBuilding();
             });
         }
@@ -307,7 +307,7 @@ class WaterMonitoringApp {
         const closeBtn = document.querySelector('.close');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
-                console.log("❌ Закрытие модального окна");
+                console.log(" Закрытие модального окна");
                 this.hideModal();
             });
         }
@@ -318,11 +318,11 @@ class WaterMonitoringApp {
             }
         });
 
-        console.log("✅ Обработчики событий настроены");
+        console.log(" Обработчики событий настроены");
     }
 
     async loadBuildings() {
-        console.log("🏢 Загрузка зданий...");
+        console.log(" Загрузка зданий...");
         const container = document.getElementById('buildingsList');
         
         try {
@@ -331,7 +331,7 @@ class WaterMonitoringApp {
             }
             
             const buildings = await this.api.getBuildings();
-            console.log("✅ Здания загружены:", buildings);
+            console.log(" Здания загружены:", buildings);
             
             if (buildings && buildings.length > 0) {
                 this.buildings = buildings;
@@ -347,7 +347,7 @@ class WaterMonitoringApp {
             }
             
         } catch (error) {
-            console.error("❌ Ошибка загрузки:", error);
+            console.error(" Ошибка загрузки:", error);
             this.showTestData();
         }
     }
@@ -378,11 +378,11 @@ class WaterMonitoringApp {
         select.innerHTML = '<option value="">Выберите здание...</option>' +
             buildings.map(b => `<option value="${b.id}">${b.address}</option>`).join('');
         
-        console.log(`✅ Выпадающий список заполнен ${buildings.length} зданиями`);
+        console.log(` Выпадающий список заполнен ${buildings.length} зданиями`);
     }
 
     filterBuildings(query) {
-        console.log(`🔍 Фильтрация зданий по запросу: "${query}"`);
+        console.log(` Фильтрация зданий по запросу: "${query}"`);
         const filtered = this.buildings.filter(building =>
             building.address.toLowerCase().includes(query.toLowerCase())
         );
@@ -390,10 +390,10 @@ class WaterMonitoringApp {
     }
 
     showBuildingDetails(buildingId) {
-        console.log(`🔍 Показать детали здания: ${buildingId}`);
+        console.log(` Показать детали здания: ${buildingId}`);
         const building = this.buildings.find(b => b.id === buildingId);
         if (!building) {
-            console.error("❌ Здание не найдено:", buildingId);
+            console.error(" Здание не найдено:", buildingId);
             return;
         }
 
@@ -420,21 +420,21 @@ class WaterMonitoringApp {
     }
 
     setRealtimeBuilding(buildingId) {
-        console.log(`🎯 Установка здания для мониторинга: ${buildingId}`);
+        console.log(` Установка здания для мониторинга: ${buildingId}`);
         this.currentBuilding = buildingId;
         this.showSection('realtime');
         this.hideModal();
     }
 
     async analyzeBuilding(buildingId, days = 30) {
-        console.log(`📈 Анализ здания ${buildingId} за ${days} дней`);
+        console.log(` Анализ здания ${buildingId} за ${days} дней`);
         try {
             const analysis = await this.api.analyzeBuilding(buildingId, days);
             this.showAnalysisResults(analysis);
             this.showSection('analysis');
             this.hideModal();
         } catch (error) {
-            console.error("❌ Ошибка анализа:", error);
+            console.error(" Ошибка анализа:", error);
             this.showError('Ошибка анализа данных: ' + error.message);
         }
     }
@@ -452,7 +452,7 @@ class WaterMonitoringApp {
     }
 
     showAnalysisResults(analysis) {
-        console.log("📊 Отображение результатов анализа:", analysis);
+        console.log(" Отображение результатов анализа:", analysis);
         const container = document.getElementById('analysisResults');
         if (!container) return;
 
@@ -460,7 +460,7 @@ class WaterMonitoringApp {
         if (analysis.data_source === 'estimated') {
             htmlContent = `
                 <div class="warning-banner" style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin-bottom: 20px; color: #856404;">
-                    ⚠️ Внимание: используются расчетные данные. Реальные данные отсутствуют в системе.
+                     Внимание: используются расчетные данные. Реальные данные отсутствуют в системе.
                 </div>
             `;
         }
@@ -488,7 +488,7 @@ class WaterMonitoringApp {
             <div class="analysis-header">
                 <h3>Анализ за период: ${analysis.period || '30 дней'}</h3>
                 <div class="status ${analysis.has_anomalies ? 'has-anomalies' : 'normal'}">
-                    ${analysis.has_anomalies ? '⚠️ Обнаружены аномалии' : '✅ Норма'}
+                    ${analysis.has_anomalies ? 'Обнаружены аномалии' : 'Норма'}
                 </div>
             </div>
             
@@ -544,7 +544,7 @@ class WaterMonitoringApp {
 
             <!-- РЕКОМЕНДАЦИИ -->
             <div class="recommendations">
-                <h4>💡 Рекомендации системы</h4>
+                <h4>Рекомендации системы</h4>
                 <div class="recommendations-list">
                     ${this.renderRecommendations(analysis.recommendations || [])}
                 </div>
@@ -593,7 +593,7 @@ class WaterMonitoringApp {
 
     renderRecommendations(recommendations) {
         if (!recommendations || recommendations.length === 0) {
-            return '<div class="recommendation">✅ Все системы работают нормально</div>';
+            return '<div class="recommendation">Все системы работают нормально</div>';
         }
         
         return recommendations.map(rec => {
@@ -648,22 +648,22 @@ class WaterMonitoringApp {
 
     // РЕАЛЬНОЕ ВРЕМЯ С WebSocket
     startRealtimeMonitoring() {
-        console.log("⏰ Запуск мониторинга в реальном времени");
+        console.log("Запуск мониторинга в реальном времени");
         this.isRealtimeActive = true;
         
         // Загружаем начальные данные
         this.updateRealtimeData();
         
-        this.showNotification('🔴 Режим реального времени активирован', 'success');
+        this.showNotification('Режим реального времени активирован', 'success');
     }
 
     stopRealtimeMonitoring() {
-        console.log("⏹️ Остановка мониторинга реального времени");
+        console.log("Остановка мониторинга реального времени");
         this.isRealtimeActive = false;
     }
 
     handleRealtimeUpdate(data) {
-        console.log("📊 Обновление данных реального времени:", data);
+        console.log("Обновление данных реального времени:", data);
         this.displayRealtimeData(data.data);
     }
 
@@ -673,7 +673,7 @@ class WaterMonitoringApp {
         }
 
         if (!this.currentBuilding) {
-            console.log("⚠️ Нет здания для мониторинга");
+            console.log("Нет здания для мониторинга");
             this.displayDemoRealtimeData();
             return;
         }
@@ -682,7 +682,7 @@ class WaterMonitoringApp {
             const data = await this.api.getRealtimeData(this.currentBuilding);
             this.displayRealtimeData(data);
         } catch (error) {
-            console.error("❌ Ошибка обновления реального времени:", error);
+            console.error("Ошибка обновления реального времени:", error);
             this.displayDemoRealtimeData();
         }
     }
@@ -842,7 +842,7 @@ class WaterMonitoringApp {
     async startDataGenerator() {
         try {
             await this.api.startGenerator();
-            this.showNotification('🚀 Генератор данных запущен', 'success');
+            this.showNotification('Генератор данных запущен', 'success');
         } catch (error) {
             this.showError('Ошибка запуска генератора: ' + error.message);
         }
@@ -851,7 +851,7 @@ class WaterMonitoringApp {
     async stopDataGenerator() {
         try {
             await this.api.stopGenerator();
-            this.showNotification('🛑 Генератор данных остановлен', 'warning');
+            this.showNotification('Генератор данных остановлен', 'warning');
         } catch (error) {
             this.showError('Ошибка остановки генератора: ' + error.message);
         }
@@ -860,7 +860,7 @@ class WaterMonitoringApp {
     async generateBuildingData(buildingId) {
         try {
             await this.api.generateCompleteHistory(1); // 1 день данных
-            this.showNotification('📊 Данные успешно сгенерированы', 'success');
+            this.showNotification('Данные успешно сгенерированы', 'success');
             this.hideModal();
         } catch (error) {
             this.showError('Ошибка генерации данных: ' + error.message);
@@ -883,7 +883,7 @@ class WaterMonitoringApp {
     }
 
     showError(message) {
-        console.error("❌ Показать ошибку:", message);
+        console.error("Показать ошибку:", message);
         this.showNotification(message, 'error');
     }
 
@@ -929,13 +929,13 @@ class WaterMonitoringApp {
     updateConnectionStatus(connected) {
         const statusElement = document.getElementById('connectionStatus');
         if (statusElement) {
-            statusElement.textContent = connected ? '🟢 Подключено' : '🔴 Отключено';
+            statusElement.textContent = connected ? 'Подключено' : 'Отключено';
             statusElement.style.color = connected ? '#27ae60' : '#e74c3c';
         }
     }
 
     showTestData() {
-        console.log("🔄 Используем тестовые данные");
+        console.log("Используем тестовые данные");
         const testBuildings = [
             {
                 id: 'test-1',
@@ -961,8 +961,8 @@ class WaterMonitoringApp {
 }
 
 // Запуск приложения после загрузки DOM
-console.log("📄 Скрипт main.js загружен");
+console.log("Скрипт main.js загружен");
 document.addEventListener('DOMContentLoaded', function() {
-    console.log("🚀 DOM готов, запускаем приложение...");
+    console.log("DOM готов, запускаем приложение...");
     window.app = new WaterMonitoringApp();
 });
